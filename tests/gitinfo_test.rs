@@ -207,6 +207,19 @@ fn branch_status_on_default_branch_is_empty() {
 }
 
 #[test]
+fn branch_status_on_default_branch_with_remote_is_empty() {
+    // With a remote configured, resolve_base yields "origin/main" (the full
+    // base string), but the suppression check must compare against the
+    // SHORT name ("main") — same as the bash's `base_name="${base#origin/}"`
+    // — so sitting on `main` itself still produces empty output instead of
+    // "main [merged]".
+    let root = TempRoot::new("default-branch-remote");
+    let work = setup_origin_and_work(&root);
+
+    assert_eq!(branch_status_output(&work), "");
+}
+
+#[test]
 fn branch_status_non_git_path_is_empty() {
     let root = TempRoot::new("non-git");
     let dir = root.join("plain");

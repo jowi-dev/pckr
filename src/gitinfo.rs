@@ -165,7 +165,8 @@ pub fn branch_status(path: &Path) -> Option<BranchStatus> {
     }
 
     let base = resolve_base(path)?;
-    if base == branch {
+    let base_name = base.strip_prefix("origin/").unwrap_or(&base);
+    if base_name == branch {
         return None;
     }
 
