@@ -1,0 +1,11 @@
+[package]
+name = "pckr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Unused in this slice (non-TUI core only); declared now so Cargo.lock is
+# stable across the slice-2 TUI work. `#![allow(dead_code)]` on the relevant
+# items keeps `cargo clippy -D warnings` clean in the meantime.
+ratatui = "0.29"
+crossterm = "0.28"
