@@ -7,7 +7,7 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const DIM: &str = "\x1b[2m";
 
-const HEADERS: [&str; 8] = [
+pub(crate) const HEADERS: [&str; 8] = [
     "#", " ", "SESSION", "ATTN", "WT", "PROJECT", "BRANCH", "STATUS",
 ];
 
@@ -56,12 +56,14 @@ pub fn compute_column_widths(rows: &[SessionRow]) -> [usize; 8] {
     widths
 }
 
-fn pad_left(text: &str, width: usize) -> String {
+/// Left-justifies `text`: pads with trailing spaces on the right.
+pub(crate) fn justify_left(text: &str, width: usize) -> String {
     let pad = width.saturating_sub(text.chars().count());
     format!("{text}{}", " ".repeat(pad))
 }
 
-fn pad_right(text: &str, width: usize) -> String {
+/// Right-justifies `text`: pads with leading spaces on the left.
+pub(crate) fn justify_right(text: &str, width: usize) -> String {
     let pad = width.saturating_sub(text.chars().count());
     format!("{}{text}", " ".repeat(pad))
 }
@@ -75,24 +77,24 @@ pub fn to_table(rows: &[SessionRow]) -> String {
     let widths = compute_column_widths(rows);
 
     let header_cells = [
-        pad_right(HEADERS[0], widths[0]),
-        pad_left(HEADERS[1], widths[1]),
-        pad_left(HEADERS[2], widths[2]),
-        pad_left(HEADERS[3], widths[3]),
-        pad_left(HEADERS[4], widths[4]),
-        pad_left(HEADERS[5], widths[5]),
-        pad_left(HEADERS[6], widths[6]),
-        pad_left(HEADERS[7], widths[7]),
+        justify_right(HEADERS[0], widths[0]),
+        justify_left(HEADERS[1], widths[1]),
+        justify_left(HEADERS[2], widths[2]),
+        justify_left(HEADERS[3], widths[3]),
+        justify_left(HEADERS[4], widths[4]),
+        justify_left(HEADERS[5], widths[5]),
+        justify_left(HEADERS[6], widths[6]),
+        justify_left(HEADERS[7], widths[7]),
     ];
     let mut lines = vec![header_cells.join("  ").trim_end().to_string()];
 
     for r in rows {
-        let idx_cell = pad_right(&r.idx.to_string(), widths[0]);
-        let marker_cell = pad_left(&r.marker.to_string(), widths[1]);
-        let session_cell = pad_left(&r.display_name, widths[2]);
-        let attn_cell = pad_left(&r.attn, widths[3]);
-        let wt_cell = pad_left(&r.wt, widths[4]);
-        let project_cell = pad_left(&r.project, widths[5]);
+        let idx_cell = justify_right(&r.idx.to_string(), widths[0]);
+        let marker_cell = justify_left(&r.marker.to_string(), widths[1]);
+        let session_cell = justify_left(&r.display_name, widths[2]);
+        let attn_cell = justify_left(&r.attn, widths[3]);
+        let wt_cell = justify_left(&r.wt, widths[4]);
+        let project_cell = justify_left(&r.project, widths[5]);
 
         let branch_pad = widths[6].saturating_sub(r.branch.chars().count());
         let branch_cell = format!("{DIM}{}{RESET}{}", r.branch, " ".repeat(branch_pad));
@@ -105,7 +107,7 @@ pub fn to_table(rows: &[SessionRow]) -> String {
         let status_pad = widths[7].saturating_sub(r.status.chars().count());
         let status_cell = match status_color {
             Some(color) => format!("{color}{}{RESET}{}", r.status, " ".repeat(status_pad)),
-            None => pad_left(&r.status, widths[7]),
+            None => justify_left(&r.status, widths[7]),
         };
 
         let cells = [
