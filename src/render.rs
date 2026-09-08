@@ -128,6 +128,7 @@ pub fn to_table(rows: &[SessionRow]) -> String {
 mod tests {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn row(
         idx: usize,
         marker: char,
