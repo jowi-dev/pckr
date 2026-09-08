@@ -160,19 +160,50 @@ fn draw_prompt_line(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+/// Renders the header (pinned to the first line of `area`) and the data
+/// rows (scrolled, in the remaining lines) so that the header is always
+/// visible and the selected row is always within the viewport, even when
+/// the filtered row count exceeds the available height.
 fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
     let widths = render::compute_column_widths(app.rows());
     let filtered = app.filtered_rows();
 
-    let mut lines: Vec<Line> = Vec::with_capacity(filtered.len() + 1);
-    lines.push(header_line(&widths));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    let header_area = chunks[0];
+    let data_area = chunks[1];
 
-    for (i, row) in filtered.iter().enumerate() {
-        let selected = i == app.selected();
-        lines.push(data_line(row, &widths, selected));
+    frame.render_widget(Paragraph::new(header_line(&widths)), header_area);
+
+    let data_lines: Vec<Line> = filtered
+        .iter()
+        .enumerate()
+        .map(|(i, row)| data_line(row, &widths, i == app.selected()))
+        .collect();
+
+    let scroll = data_scroll_offset(data_lines.len(), app.selected(), data_area.height);
+    frame.render_widget(Paragraph::new(data_lines).scroll((scroll, 0)), data_area);
+}
+
+/// Computes the vertical scroll offset (in data-row lines) needed to keep
+/// the selected row within a viewport of `viewport_height` data rows. The
+/// header is rendered separately and is therefore always visible
+/// regardless of this offset.
+fn data_scroll_offset(num_rows: usize, selected: usize, viewport_height: u16) -> u16 {
+    if num_rows == 0 || viewport_height == 0 {
+        return 0;
     }
-
-    frame.render_widget(Paragraph::new(lines), area);
+    let num_rows = num_rows as u16;
+    if num_rows <= viewport_height {
+        return 0;
+    }
+    let selected = selected as u16;
+    let max_offset = num_rows - viewport_height;
+    // Keep `selected` within [offset, offset + viewport_height).
+    let min_offset_for_visibility = selected.saturating_sub(viewport_height - 1);
+    min_offset_for_visibility.min(max_offset)
 }
 
 fn header_line(widths: &[usize; 8]) -> Line<'static> {
@@ -308,5 +339,29 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(text.contains("INSERT — type to filter | enter:switch | esc:normal mode"));
         assert!(text.contains("[I] filter > al"));
+    }
+
+    #[test]
+    fn table_scrolls_to_keep_selected_row_visible_and_header_pinned() {
+        let rows: Vec<SessionRow> = (0..30)
+            .map(|i| row(i + 1, &format!("session-{i}"), "merged"))
+            .collect();
+        let mut app = App::new(rows);
+        for _ in 0..25 {
+            app.handle_key(Key::Char('j'));
+        }
+        assert_eq!(app.selected(), 25);
+
+        // 10-line-high layout: help(1) + table(8) + prompt(1).
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("SESSION"), "header row must stay visible");
+        assert!(
+            text.contains("session-25"),
+            "selected row must be within the viewport:\n{text}"
+        );
     }
 }
