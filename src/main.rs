@@ -5,10 +5,12 @@
 //! by tests / tmux key bindings. See docs/parity.md, section "Invocation".
 
 mod actions;
+mod app;
 mod gitinfo;
 mod model;
 mod render;
 mod tmux;
+mod ui;
 
 use std::env;
 use std::path::Path;
@@ -24,8 +26,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
 
     if args.is_empty() {
-        eprintln!("TUI not implemented yet");
-        return ExitCode::from(1);
+        let tmux = Tmux::new();
+        return match ui::run(&tmux) {
+            Ok(()) => ExitCode::from(0),
+            Err(e) => {
+                eprintln!("pckr: {e}");
+                ExitCode::from(1)
+            }
+        };
     }
 
     let tmux = Tmux::new();
