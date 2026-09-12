@@ -1,0 +1,10 @@
+[backend]
+provider = "github"
+
+[backend.github]
+repo = "jowi-dev/pckr"
+
+[work.lanes.pckr]
+repo = "."
+base_branch = "main"
+prompt_file = ".tskmstr/prompts/pckr-lane.md"
