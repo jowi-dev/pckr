@@ -79,13 +79,31 @@ and the repo name for regular checkouts; `-` for non-git/missing paths.
 ## Kill flow
 
 1. Refuse to kill the current session (silent no-op).
-2. Capture `#{session_path}` BEFORE killing.
-3. `tmux kill-session -t <session>` (best-effort).
-4. If the path exists and `<path>/.git` is a file:
+2. TUI only: classify the session via `tm runs kill-safety` (see below).
+   `safe` proceeds straight to step 3; any other tier arms ConfirmKill
+   instead of killing (see TUI behavior). The CLI `pckr kill <session>`
+   subcommand skips classification entirely and always proceeds straight to
+   step 3.
+3. Capture `#{session_path}` BEFORE killing.
+4. `tmux kill-session -t <session>` (best-effort).
+5. If the path exists and `<path>/.git` is a file:
    `main_repo = git-common-dir` minus `/.git`; then
    `git -C <main_repo> worktree remove --force <path>` falling back to
    `rm -rf <path>`; then `git -C <main_repo> worktree prune` (best-effort).
-5. Always exit 0.
+6. Always exit 0.
+
+### Kill-safety classification (tm dependency contract)
+
+TUI kills (never CLI `pckr kill`) run `tm runs kill-safety <session_name>` to
+classify the session before touching it (contract: tskmstr's
+`docs/decisions/0005-kill-safety-classification.md`). stdout line 1 is one of
+`live-run` / `root-session` / `safe` / `unknown`; line 2 is a human-readable
+reason, display-only, never branched on. Non-zero exit, an unrecognized line
+1 token, or `tm` not being installed all collapse to `unknown`. This is a
+deliberate divergence from the bash picker, which killed unconditionally with
+no classification step. Classification runs once per `x` keypress (skipped
+entirely for the current session, see Kill flow above) and may block briefly,
+since `tm` can consult `gh`.
 
 ## root-session / jump-root
 
@@ -100,16 +118,31 @@ client to that session and never aborts the caller.
 - NORMAL mode (initial): status line `[N] session >`; header/help line
   `NORMAL — enter:switch | x:kill | g:root | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close`.
   Keys: `j`/`k` (and arrows) move selection; `enter` switch to selected
-  session and exit; `x` kill selected row (kill flow above) then refresh
-  list; `g` jump-root of the CURRENT session (no arg) and exit; digits
-  `1`-`9` select row N of the currently visible (filtered) list and accept
-  — no-op if N exceeds visible rows; `i` enter INSERT; `q` or `esc` quit.
+  session and exit; `x` on the current session is a silent no-op (short-
+  circuits before classification); `x` on any other row classifies it (kill
+  flow above) — `safe` kills + refreshes silently, any other tier enters
+  ConfirmKill instead of killing; `g` jump-root of the CURRENT session (no
+  arg) and exit; digits `1`-`9` select row N of the currently visible
+  (filtered) list and accept — no-op if N exceeds visible rows; `i` enter
+  INSERT; `q` or `esc` quit.
 - INSERT mode: status line `[I] filter > <query>`; help line
   `INSERT — type to filter | enter:switch | esc:normal mode`. All typed
   printable chars edit the filter (case-insensitive subsequence match on the
   display row text); backspace deletes; `enter` accepts the selected match;
   `esc` returns to NORMAL keeping the filter applied. Single-key commands
   (x, q, digits, g, i, j, k) MUST NOT trigger while in INSERT.
+- ConfirmKill mode (armed when `x` classifies the selected session as
+  `live-run`, `root-session`, or `unknown`): help line exactly
+  `y=kill  any other key=cancel`; prompt line
+  `Kill '<name>' + worktree? [<label>] <reason>`, where `<label>` is
+  `live run` / `root session` / `unclassified` (unclassified covers
+  `unknown`) and the trailing `<reason>` is omitted entirely when the tier's
+  reason string is empty. `y`/`Y` confirms and proceeds to the kill flow;
+  ANY other key (including digits, `g`, `i`, `q`, `esc`) cancels back to
+  NORMAL, discarding the pending kill, leaving the session and worktree
+  untouched. Single-key NORMAL commands (j, k, g, digits, i, q, x) MUST NOT
+  trigger while in ConfirmKill — every non-`y`/`Y` key is swallowed by the
+  cancel path instead.
 - The filter persists when returning to NORMAL (digits then index into the
   filtered rows), matching the bash/fzf behavior.
 - Selection clamps into range after refresh/filter changes.
