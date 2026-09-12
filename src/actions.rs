@@ -10,9 +10,11 @@ use crate::tmux::Tmux;
 /// 1. Refuse to kill the current session (silent no-op).
 /// 2. Capture the session path BEFORE killing.
 /// 3. `kill-session` (best-effort).
-/// 4. If the path exists and is a linked worktree, `worktree remove
-///    --force`, falling back to `rm -rf`, then `worktree prune`
-///    (best-effort).
+/// 4. If the path exists and is a linked worktree, plain `worktree remove`
+///    (no `--force`), then `worktree prune` (best-effort). Git refuses to
+///    remove a worktree containing modified or untracked files; when it
+///    refuses, the directory is left in place — there is no recursive-delete
+///    fallback.
 /// 5. Always succeeds.
 pub fn kill_session(tmux: &Tmux, name: &str) {
     if let Some(current) = tmux.current_session_name() {
@@ -34,18 +36,12 @@ pub fn kill_session(tmux: &Tmux, name: &str) {
         return;
     };
 
-    let removed = Command::new("git")
+    let _ = Command::new("git")
         .arg("-C")
         .arg(&main_repo)
-        .args(["worktree", "remove", "--force"])
+        .args(["worktree", "remove"])
         .arg(path)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if !removed {
-        let _ = std::fs::remove_dir_all(path);
-    }
+        .output();
 
     let _ = Command::new("git")
         .arg("-C")

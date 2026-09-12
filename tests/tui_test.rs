@@ -447,6 +447,99 @@ fn kill_removes_session_worktree_directory_and_worktree_registration() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn kill_preserves_dirty_worktree() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("killdirty");
+
+    // A real git repo + linked worktree, both under fresh temp dirs — never
+    // this test binary's own checkout (see module-level SAFETY note).
+    let main_repo = fresh_dir("killdirty-main-repo");
+    git(&main_repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(main_repo.join("f.txt"), "x\n").unwrap();
+    git(&main_repo, &["add", "f.txt"]);
+    git_commit(&main_repo, "initial");
+
+    let worktree_dir = fresh_dir("killdirty-worktree");
+    // `worktree add` requires the target not already exist as a non-empty
+    // dir when created fresh by git itself, so remove the placeholder first.
+    std::fs::remove_dir(&worktree_dir).unwrap();
+    git(
+        &main_repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            worktree_dir.to_str().unwrap(),
+            "-b",
+            "wt-dirty-branch",
+        ],
+    );
+    assert!(worktree_dir.join(".git").is_file());
+
+    // Dirty the worktree: modify the tracked file and add an untracked one.
+    std::fs::write(worktree_dir.join("f.txt"), "dirty contents\n").unwrap();
+    std::fs::write(worktree_dir.join("scratch.txt"), "scratch\n").unwrap();
+
+    server.new_session("wt-dirty", &worktree_dir, &["sh"]);
+    // A decoy session created AFTER wt-dirty. Absent any attached client,
+    // tmux's notion of "current session" (which the refuse-to-kill-the-
+    // current-session guard consults) resolves to the most recently created
+    // session — without this, wt-dirty itself would look "current" and the
+    // kill would be a silent no-op, never reaching the worktree-removal
+    // code at all.
+    let dir_decoy = fresh_dir("killdirty-decoy");
+    server.new_session("killdirty-decoy", &dir_decoy, &["sh"]);
+
+    let output = Command::new(pckr_bin())
+        .env("TMUX_PICKER_SOCKET", &server.socket)
+        .args(["kill", "wt-dirty"])
+        .output()
+        .expect("failed to run pckr kill");
+    assert!(
+        output.status.success(),
+        "pckr kill must always exit 0 per docs/parity.md; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.session_names().join(","),
+        |names| !names.split(',').any(|n| n == "wt-dirty"),
+    );
+
+    let sessions = server.session_names();
+    assert!(
+        !sessions.contains(&"wt-dirty".to_string()),
+        "wt-dirty session must be gone after kill; sessions: {sessions:?}"
+    );
+
+    assert!(
+        worktree_dir.exists(),
+        "worktree directory with uncommitted/untracked changes must NOT be removed after kill"
+    );
+
+    let f_txt_contents = std::fs::read_to_string(worktree_dir.join("f.txt"))
+        .expect("f.txt must still exist in the preserved worktree");
+    assert_eq!(
+        f_txt_contents, "dirty contents\n",
+        "modified tracked file must retain its dirty contents, proving the worktree was not touched"
+    );
+
+    assert!(
+        worktree_dir.join("scratch.txt").exists(),
+        "untracked scratch.txt must survive since the worktree removal must be refused"
+    );
+
+    let worktree_list =
+        String::from_utf8_lossy(&git(&main_repo, &["worktree", "list"]).stdout).to_string();
+    assert!(
+        worktree_list.contains(worktree_dir.to_str().unwrap()),
+        "git worktree list must still show the dirty worktree since git must have refused removal \
+and prune must not drop a worktree whose directory still exists:\n{worktree_list}"
+    );
+}
+
 // --- (e) switch -------------------------------------------------------------
 
 #[test]

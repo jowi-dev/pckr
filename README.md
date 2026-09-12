@@ -75,6 +75,8 @@ a frozen public contract other tools can depend on.
 - `pckr branch-status <path>` — print `<branch> [merged|unmerged]` or `[detached]`.
 - `pckr project-name <path>` — print the parent repo's basename, or `-`.
 - `pckr kill <session>` — kill a session and clean up its worktree, if any.
+  Cleanup is skipped (the directory is left in place) if the worktree has
+  uncommitted or untracked changes.
 - `pckr root-session [<session>]` — print the resolved root session name.
 - `pckr jump-root [<session>]` — switch the client to the root session.
 

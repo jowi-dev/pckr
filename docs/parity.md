@@ -83,8 +83,14 @@ and the repo name for regular checkouts; `-` for non-git/missing paths.
 3. `tmux kill-session -t <session>` (best-effort).
 4. If the path exists and `<path>/.git` is a file:
    `main_repo = git-common-dir` minus `/.git`; then
-   `git -C <main_repo> worktree remove --force <path>` falling back to
-   `rm -rf <path>`; then `git -C <main_repo> worktree prune` (best-effort).
+   `git -C <main_repo> worktree remove <path>` (no `--force`, best-effort);
+   then `git -C <main_repo> worktree prune` (best-effort). Without
+   `--force`, git refuses to remove a worktree with modified or untracked
+   files, a lock, or submodules — in that case the directory is left in
+   place with no fallback removal. This is a deliberate divergence from the
+   predecessor bash script, which force-removed and fell back to
+   `rm -rf <path>`; that combination once destroyed a real worktree's
+   uncommitted work (GH-1).
 5. Always exit 0.
 
 ## root-session / jump-root
