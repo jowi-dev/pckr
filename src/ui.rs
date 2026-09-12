@@ -19,12 +19,14 @@ use ratatui::{Frame, Terminal};
 
 use crate::actions;
 use crate::app::{App, Effect, Key, Mode};
+use crate::kill_safety::{self, KillTier};
 use crate::model;
 use crate::render;
 use crate::tmux::Tmux;
 
 const NORMAL_HELP: &str = "NORMAL — enter:switch | x:kill | g:root | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close";
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
+const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 
 /// Restores the terminal to its pre-TUI state (raw mode off, alternate
 /// screen left). Best-effort: called on every exit path, including from the
@@ -113,6 +115,22 @@ fn event_loop(
                 let rows = model::build_rows(tmux);
                 app.set_rows(rows);
             }
+            Effect::RequestKill(name) => {
+                // The CURRENT session is a silent no-op, checked BEFORE
+                // classification so we never shell out to `tm` for it.
+                if tmux.current_session_name().as_deref() == Some(name.as_str()) {
+                    continue;
+                }
+                let classification = kill_safety::classify(&name);
+                if classification.tier == KillTier::Safe {
+                    actions::kill_session(tmux, &name);
+                    model::run_refresh_hook(tmux);
+                    let rows = model::build_rows(tmux);
+                    app.set_rows(rows);
+                } else {
+                    app.arm_confirm_kill(name, classification.tier, classification.reason);
+                }
+            }
             Effect::JumpRoot => {
                 actions::jump_root(tmux, None);
                 return Ok(None);
@@ -144,6 +162,7 @@ fn draw_help_line(frame: &mut Frame, area: Rect, mode: Mode) {
     let text = match mode {
         Mode::Normal => NORMAL_HELP,
         Mode::Insert => INSERT_HELP,
+        Mode::ConfirmKill => CONFIRM_HELP,
     };
     frame.render_widget(Paragraph::new(text), area);
 }
@@ -152,11 +171,36 @@ fn draw_prompt_line(frame: &mut Frame, area: Rect, app: &App) {
     let text = match app.mode() {
         Mode::Normal => "[N] session > ".to_string(),
         Mode::Insert => format!("[I] filter > {}", app.filter()),
+        Mode::ConfirmKill => confirm_kill_prompt(app),
     };
     frame.render_widget(Paragraph::new(text), area);
     if app.mode() == Mode::Insert {
         let cursor_x = area.x + "[I] filter > ".len() as u16 + app.filter().chars().count() as u16;
         frame.set_cursor_position((cursor_x, area.y));
+    }
+}
+
+/// Builds the confirmation question for the armed pending kill, e.g.
+/// `Kill 'alpha' + worktree? [live run] session is running a live task`.
+/// Omits the trailing reason cleanly when it's empty.
+fn confirm_kill_prompt(app: &App) -> String {
+    let Some(pending) = app.pending_kill() else {
+        return String::new();
+    };
+    let label = match pending.tier {
+        KillTier::LiveRun => "live run",
+        KillTier::RootSession => "root session",
+        // Safe never arms a confirmation; grouped with Unknown only so the
+        // match stays exhaustive.
+        KillTier::Unknown | KillTier::Safe => "unclassified",
+    };
+    if pending.reason.is_empty() {
+        format!("Kill '{}' + worktree? [{}]", pending.name, label)
+    } else {
+        format!(
+            "Kill '{}' + worktree? [{}] {}",
+            pending.name, label, pending.reason
+        )
     }
 }
 
@@ -339,6 +383,44 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(text.contains("INSERT — type to filter | enter:switch | esc:normal mode"));
         assert!(text.contains("[I] filter > al"));
+    }
+
+    #[test]
+    fn confirm_kill_mode_renders_help_and_prompt() {
+        let rows = vec![row(1, "alpha", "unmerged")];
+        let mut app = App::new(rows);
+        app.arm_confirm_kill(
+            "alpha".to_string(),
+            crate::kill_safety::KillTier::LiveRun,
+            "session is running a live task".to_string(),
+        );
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("y=kill  any other key=cancel"));
+        assert!(text.contains("Kill 'alpha' + worktree? [live run] session is running a live task"));
+    }
+
+    #[test]
+    fn confirm_kill_mode_omits_trailing_space_when_reason_empty() {
+        let rows = vec![row(1, "alpha", "unmerged")];
+        let mut app = App::new(rows);
+        app.arm_confirm_kill(
+            "alpha".to_string(),
+            crate::kill_safety::KillTier::RootSession,
+            String::new(),
+        );
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Kill 'alpha' + worktree? [root session]"));
+        assert!(!text.contains("[root session] \n"));
     }
 
     #[test]
