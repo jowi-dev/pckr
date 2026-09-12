@@ -220,6 +220,40 @@ fn pckr_argv(socket: &str) -> [String; 3] {
     ]
 }
 
+/// Writes a fresh, executable stub `tm` shell script (mode 0o755) into a new
+/// `fresh_dir` and returns that directory. The script body is `#!/bin/sh`
+/// followed verbatim by `script_body` (so it can print classification lines
+/// and/or `exit <n>`). Callers put this directory FIRST on `PATH` when
+/// launching the pckr pane (see `pckr_argv_with_tm_stub`) so the pckr
+/// process's `tm runs kill-safety <name>` subprocess call resolves to this
+/// stub rather than any real `tm` on the host.
+fn stub_tm_dir(label: &str, script_body: &str) -> PathBuf {
+    let dir = fresh_dir(label);
+    let script_path = dir.join("tm");
+    std::fs::write(&script_path, format!("#!/bin/sh\n{script_body}\n")).unwrap();
+    let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&script_path, perms).unwrap();
+    dir
+}
+
+/// Like `pckr_argv`, but prepends `stub_dir` to `PATH` so the pckr process
+/// (and anything it shells out to, e.g. `tm runs kill-safety`) sees the stub
+/// `tm` first. The current process's own `PATH` (which includes the nix dev
+/// shell's tmux/git) is preserved after it, via `env PATH=<stub>:<PATH> ...`.
+fn pckr_argv_with_tm_stub(socket: &str, stub_dir: &Path) -> [String; 3] {
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    [
+        "sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "TMUX_PICKER_SOCKET={socket} PATH={}:{current_path} {}",
+            stub_dir.display(),
+            pckr_bin()
+        ),
+    ]
+}
+
 /// Like `pckr_argv`, but writes pckr's exit code to `marker_path` afterward
 /// so tests can observe clean process exit by reading a file directly.
 ///
@@ -374,9 +408,14 @@ fn insert_mode_edits_filter_and_never_kills_a_session() {
 // --- (d) kill + worktree cleanup -------------------------------------------
 
 #[test]
-fn kill_removes_session_worktree_directory_and_worktree_registration() {
+fn kill_removes_session_worktree_directory_and_worktree_registration_when_tier_is_safe() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let server = TestServer::new("kill");
+
+    let stub_dir = stub_tm_dir(
+        "kill-safe-stub",
+        "echo safe\necho classified as safe by stub\nexit 0",
+    );
 
     // A real git repo + linked worktree, both under fresh temp dirs — never
     // this test binary's own checkout (see module-level SAFETY note).
@@ -405,7 +444,7 @@ fn kill_removes_session_worktree_directory_and_worktree_registration() {
 
     let dir_host = fresh_dir("kill-host");
     server.new_session("wt-target", &worktree_dir, &["sh"]);
-    let argv = pckr_argv(&server.socket);
+    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
@@ -442,6 +481,254 @@ fn kill_removes_session_worktree_directory_and_worktree_registration() {
     assert!(
         !worktree_list.contains(worktree_dir.to_str().unwrap()),
         "git worktree list must no longer show the removed worktree:\n{worktree_list}"
+    );
+
+    // The safe tier must not leave a confirmation prompt on screen after
+    // the kill completes (the full capture history isn't observable, so
+    // this is the closest available "never prompted" assertion).
+    let text = server.capture_pane("pckr-host");
+    assert!(
+        !text.contains("y=kill"),
+        "safe tier must never enter confirmation mode:\n{text}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
+#[test]
+fn kill_prompts_and_respects_decline_then_confirm_when_tier_is_live_run() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("killliverun");
+
+    let stub_dir = stub_tm_dir(
+        "kill-liverun-stub",
+        "echo live-run\necho a test is running in this session\nexit 0",
+    );
+
+    // A real git repo + linked worktree, both under fresh temp dirs — never
+    // this test binary's own checkout (see module-level SAFETY note).
+    let main_repo = fresh_dir("killliverun-main-repo");
+    git(&main_repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(main_repo.join("f.txt"), "x\n").unwrap();
+    git(&main_repo, &["add", "f.txt"]);
+    git_commit(&main_repo, "initial");
+
+    let worktree_dir = fresh_dir("killliverun-worktree");
+    std::fs::remove_dir(&worktree_dir).unwrap();
+    git(
+        &main_repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            worktree_dir.to_str().unwrap(),
+            "-b",
+            "wt-branch",
+        ],
+    );
+    assert!(worktree_dir.join(".git").is_file());
+
+    let dir_host = fresh_dir("killliverun-host");
+    server.new_session("wt-target", &worktree_dir, &["sh"]);
+    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("wt-target"),
+    );
+
+    // Row 0 is pckr-host (the current session, never selectable for kill);
+    // move down once to select wt-target.
+    server.send_literal("pckr-host", "j");
+    server.send_literal("pckr-host", "x");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("y=kill  any other key=cancel") && t.contains("[live run]"),
+    );
+    assert!(
+        text.contains("Kill 'wt-target' + worktree? [live run]"),
+        "confirm prompt must show the live-run label:\n{text}"
+    );
+
+    // Decline with 'n' (one of "any other key"): must cancel back to NORMAL,
+    // leaving the session and worktree untouched.
+    server.send_literal("pckr-host", "n");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("NORMAL — enter:switch"),
+    );
+    assert!(
+        !text.contains("y=kill"),
+        "declining must return to NORMAL mode, not linger in confirm mode:\n{text}"
+    );
+
+    let sessions = server.session_names();
+    assert!(
+        sessions.contains(&"wt-target".to_string()),
+        "declining the kill must leave wt-target alive; sessions: {sessions:?}"
+    );
+    assert!(
+        worktree_dir.exists(),
+        "declining the kill must leave the worktree directory in place"
+    );
+    let worktree_list =
+        String::from_utf8_lossy(&git(&main_repo, &["worktree", "list"]).stdout).to_string();
+    assert!(
+        worktree_list.contains(worktree_dir.to_str().unwrap()),
+        "declining the kill must leave the worktree registered:\n{worktree_list}"
+    );
+
+    // Now confirm: press x again, wait for the prompt, then 'y'.
+    server.send_literal("pckr-host", "x");
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("y=kill  any other key=cancel") && t.contains("[live run]"),
+    );
+    server.send_literal("pckr-host", "y");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.session_names().join(","),
+        |names| !names.split(',').any(|n| n == "wt-target"),
+    );
+
+    let sessions = server.session_names();
+    assert!(
+        !sessions.contains(&"wt-target".to_string()),
+        "confirming the kill must remove wt-target; sessions: {sessions:?}"
+    );
+    assert!(
+        !worktree_dir.exists(),
+        "confirming the kill must remove the worktree directory"
+    );
+    let worktree_list =
+        String::from_utf8_lossy(&git(&main_repo, &["worktree", "list"]).stdout).to_string();
+    assert!(
+        !worktree_list.contains(worktree_dir.to_str().unwrap()),
+        "confirming the kill must deregister the worktree:\n{worktree_list}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
+#[test]
+fn kill_prompts_with_root_session_label_and_escape_cancels() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("killroot");
+
+    let stub_dir = stub_tm_dir(
+        "kill-root-stub",
+        "echo root-session\necho this is the root checkout\nexit 0",
+    );
+
+    let dir_target = fresh_dir("killroot-target");
+    let dir_host = fresh_dir("killroot-host");
+
+    server.new_session("root-target", &dir_target, &["sh"]);
+    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("root-target"),
+    );
+
+    server.send_literal("pckr-host", "j");
+    server.send_literal("pckr-host", "x");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("y=kill  any other key=cancel") && t.contains("[root session]"),
+    );
+    assert!(
+        text.contains("Kill 'root-target' + worktree? [root session]"),
+        "confirm prompt must show the root-session label:\n{text}"
+    );
+
+    server.send_key("pckr-host", "Escape");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("NORMAL — enter:switch"),
+    );
+    assert!(
+        !text.contains("y=kill"),
+        "Escape must return to NORMAL mode:\n{text}"
+    );
+
+    let sessions = server.session_names();
+    assert!(
+        sessions.contains(&"root-target".to_string()),
+        "cancelling via Escape must leave root-target alive; sessions: {sessions:?}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
+#[test]
+fn kill_defaults_to_unclassified_label_when_tm_fails() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("killunknown");
+
+    // A `tm` that exits non-zero must be treated as `unknown` regardless of
+    // what (if anything) it printed.
+    let stub_dir = stub_tm_dir("kill-unknown-stub", "exit 1");
+
+    let dir_target = fresh_dir("killunknown-target");
+    let dir_host = fresh_dir("killunknown-host");
+
+    server.new_session("unknown-target", &dir_target, &["sh"]);
+    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("unknown-target"),
+    );
+
+    server.send_literal("pckr-host", "j");
+    server.send_literal("pckr-host", "x");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("y=kill  any other key=cancel") && t.contains("[unclassified]"),
+    );
+    assert!(
+        text.contains("Kill 'unknown-target' + worktree? [unclassified]"),
+        "a failing tm must default to the unclassified label:\n{text}"
+    );
+
+    server.send_key("pckr-host", "Escape");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("NORMAL — enter:switch"),
+    );
+    assert!(
+        !text.contains("y=kill"),
+        "cancel must return to NORMAL:\n{text}"
+    );
+
+    let sessions = server.session_names();
+    assert!(
+        sessions.contains(&"unknown-target".to_string()),
+        "cancelling must leave the session alive; sessions: {sessions:?}"
     );
 
     server.send_key("pckr-host", "q");

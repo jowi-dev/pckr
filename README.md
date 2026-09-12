@@ -44,7 +44,7 @@ NORMAL mode:
 |---|---|
 | `j` / `k` / arrows | Move selection |
 | `enter` | Switch to selected session, exit |
-| `x` | Kill selected session (+ worktree cleanup), refresh |
+| `x` | Kill selected session (+ worktree cleanup), refresh — asks for confirmation unless `tm` classifies it safe to reap |
 | `g` | Jump to root session of the current session, exit |
 | `1`-`9` | Jump to and switch to the Nth visible row |
 | `i` | Enter INSERT (filter) mode |
@@ -67,6 +67,24 @@ tool may set them with `tmux set-option -t <session> @picker_status "❓"`.
 pckr also runs the global `@picker_refresh_cmd` (via `sh -c`) before each
 list build, initial and every refresh. These option names and semantics are
 a frozen public contract other tools can depend on.
+
+## Kill confirmation
+
+Pressing `x` shells out to `tm runs kill-safety <session>` (from
+[tskmstr](https://github.com/jowi-dev/tskmstr)) to classify the selected
+session before killing it:
+
+| Tier | Meaning | Behavior |
+|---|---|---|
+| `safe` | Nothing important running | Kills + cleans up worktree silently |
+| `live-run` | A live task is running in the session | Prompts for confirmation |
+| `root-session` | The per-project hub session other sessions jump back to | Prompts for confirmation |
+| `unknown` | `tm` couldn't classify it (or isn't installed) | Prompts for confirmation |
+
+Without `tm` on `PATH`, every kill falls into `unknown` and prompts — that's
+the safe default. The tier contract (the exact tokens and their meaning) is
+pinned in tskmstr's `docs/decisions/0005-kill-safety-classification.md`; pckr
+just consumes it.
 
 ## CLI subcommands
 

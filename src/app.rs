@@ -5,6 +5,7 @@
 //! `SessionRow`s already built by `model::build_rows` and reports intent via
 //! `Effect`, so it's unit-testable without a real tmux server or terminal.
 
+use crate::kill_safety::KillTier;
 use crate::model::SessionRow;
 
 /// Editing mode. Mirrors the two-mode contract from parity.md.
@@ -12,6 +13,16 @@ use crate::model::SessionRow;
 pub enum Mode {
     Normal,
     Insert,
+    /// Tiered kill confirmation is armed; see `App::pending_kill`.
+    ConfirmKill,
+}
+
+/// A kill request awaiting confirmation (armed by `App::arm_confirm_kill`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingKill {
+    pub name: String,
+    pub tier: KillTier,
+    pub reason: String,
 }
 
 /// Side effect requested by a key event. `None` means "handled internally,
@@ -22,6 +33,8 @@ pub enum Effect {
     Switch(String),
     /// Kill this session, then the caller must refresh rows.
     Kill(String),
+    /// Classify this session's kill-safety tier before killing it.
+    RequestKill(String),
     /// Jump to the root session of the CURRENT session, then exit.
     JumpRoot,
     /// Quit without switching.
@@ -37,6 +50,7 @@ pub struct App {
     filter: String,
     mode: Mode,
     selected: usize,
+    pending_kill: Option<PendingKill>,
 }
 
 /// Case-insensitive, non-contiguous subsequence match: every char of
@@ -76,6 +90,7 @@ impl App {
             filter: String::new(),
             mode: Mode::Normal,
             selected: 0,
+            pending_kill: None,
         }
     }
 
@@ -93,6 +108,17 @@ impl App {
 
     pub fn selected(&self) -> usize {
         self.selected
+    }
+
+    pub fn pending_kill(&self) -> Option<&PendingKill> {
+        self.pending_kill.as_ref()
+    }
+
+    /// Arms tiered kill confirmation: records the pending kill and switches
+    /// to `Mode::ConfirmKill`.
+    pub fn arm_confirm_kill(&mut self, name: String, tier: KillTier, reason: String) {
+        self.pending_kill = Some(PendingKill { name, tier, reason });
+        self.mode = Mode::ConfirmKill;
     }
 
     /// Rows matching the current filter, in original order.
@@ -159,6 +185,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(key),
             Mode::Insert => self.handle_insert_key(key),
+            Mode::ConfirmKill => self.handle_confirm_kill_key(key),
         }
     }
 
@@ -177,7 +204,7 @@ impl App {
                 None => Effect::None,
             },
             Key::Char('x') => match self.selected_name() {
-                Some(name) => Effect::Kill(name),
+                Some(name) => Effect::RequestKill(name),
                 None => Effect::None,
             },
             Key::Char('g') => Effect::JumpRoot,
@@ -224,6 +251,20 @@ impl App {
                 self.mode = Mode::Normal;
                 Effect::None
             }
+        }
+    }
+
+    /// `y`/`Y` confirms the pending kill; any other key cancels. Either way
+    /// the pending kill is cleared and mode returns to `Normal`.
+    fn handle_confirm_kill_key(&mut self, key: Key) -> Effect {
+        let pending = self.pending_kill.take();
+        self.mode = Mode::Normal;
+        match key {
+            Key::Char('y') | Key::Char('Y') => match pending {
+                Some(p) => Effect::Kill(p.name),
+                None => Effect::None,
+            },
+            _ => Effect::None,
         }
     }
 }
@@ -394,10 +435,65 @@ mod tests {
     }
 
     #[test]
-    fn x_in_normal_kills_selected() {
+    fn x_in_normal_requests_kill_of_selected() {
         let mut app = App::new(rows(&["alpha", "beta"]));
         let effect = app.handle_key(Key::Char('x'));
+        assert_eq!(effect, Effect::RequestKill("alpha".to_string()));
+    }
+
+    #[test]
+    fn x_with_no_selection_is_noop() {
+        let mut app = App::new(rows(&[]));
+        let effect = app.handle_key(Key::Char('x'));
+        assert_eq!(effect, Effect::None);
+    }
+
+    // --- tiered kill confirmation ---
+
+    #[test]
+    fn confirm_kill_y_kills_and_returns_to_normal() {
+        let mut app = App::new(rows(&["alpha"]));
+        app.arm_confirm_kill("alpha".to_string(), KillTier::LiveRun, "reason".to_string());
+        assert_eq!(app.mode(), Mode::ConfirmKill);
+
+        let effect = app.handle_key(Key::Char('y'));
         assert_eq!(effect, Effect::Kill("alpha".to_string()));
+        assert_eq!(app.mode(), Mode::Normal);
+        assert!(app.pending_kill().is_none());
+    }
+
+    #[test]
+    fn confirm_kill_uppercase_y_kills() {
+        let mut app = App::new(rows(&["alpha"]));
+        app.arm_confirm_kill("alpha".to_string(), KillTier::RootSession, String::new());
+
+        let effect = app.handle_key(Key::Char('Y'));
+        assert_eq!(effect, Effect::Kill("alpha".to_string()));
+        assert_eq!(app.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn confirm_kill_cancels_on_n_esc_q_or_digit() {
+        for key in [Key::Char('n'), Key::Esc, Key::Char('q'), Key::Char('1')] {
+            let mut app = App::new(rows(&["alpha"]));
+            app.arm_confirm_kill("alpha".to_string(), KillTier::Unknown, "why".to_string());
+
+            let effect = app.handle_key(key);
+            assert_eq!(
+                effect,
+                Effect::None,
+                "key {key:?} should cancel with no effect"
+            );
+            assert_eq!(
+                app.mode(),
+                Mode::Normal,
+                "key {key:?} should return to Normal"
+            );
+            assert!(
+                app.pending_kill().is_none(),
+                "key {key:?} should clear pending kill"
+            );
+        }
     }
 
     #[test]

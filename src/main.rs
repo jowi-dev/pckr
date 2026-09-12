@@ -7,6 +7,7 @@
 mod actions;
 mod app;
 mod gitinfo;
+mod kill_safety;
 mod model;
 mod render;
 mod tmux;
