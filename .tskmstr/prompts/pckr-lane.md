@@ -5,10 +5,10 @@ not scope-creep beyond the named ticket.
 
 I am trusting you to orchestrate this ticket end to end, but execute
 as little of it yourself as possible: delegate implementation, test
-writing, and mechanical edits to sonnet subagents (briefs must forbid
-sub-agent spawning and commits); keep investigation synthesis, diff
-review, and commits on the main session. Verify each agent's actual
-diff, not its report.
+writing, and mechanical edits to glm-5-3-flash subagents (briefs must
+forbid sub-agent spawning and commits); keep investigation synthesis,
+diff review, and commits on the main session. Verify each agent's
+actual diff, not its report.
 
 ## Start
 
