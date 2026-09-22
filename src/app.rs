@@ -143,19 +143,14 @@ impl App {
         self.pending_kill.as_ref()
     }
 
-    /// Not yet called from `ui.rs` (tiled rendering is a later slice); kept
-    /// public and allowed dead for now, same as other pre-wired accessors.
-    #[allow(dead_code)]
     pub fn view(&self) -> View {
         self.view
     }
 
-    #[allow(dead_code)]
     pub fn tile_selected(&self) -> usize {
         self.tile_selected
     }
 
-    #[allow(dead_code)]
     pub fn drill_selected(&self) -> usize {
         self.drill_selected
     }
@@ -507,10 +502,7 @@ pub enum Key {
     Backspace,
     Up,
     Down,
-    /// Not yet emitted by `ui.rs` (tiled rendering is a later slice).
-    #[allow(dead_code)]
     Left,
-    #[allow(dead_code)]
     Right,
 }
 

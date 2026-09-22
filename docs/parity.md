@@ -122,7 +122,7 @@ client to that session and never aborts the caller.
 ## TUI behavior (modal)
 
 - NORMAL mode (initial): status line `[N] session >`; header/help line
-  `NORMAL — enter:switch | x:kill | g:root | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close`.
+  `NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close`.
   Keys: `j`/`k` (and arrows) move selection; `enter` switch to selected
   session and exit; `x` on the current session is a silent no-op (short-
   circuits before classification); `x` on any other row classifies it (kill

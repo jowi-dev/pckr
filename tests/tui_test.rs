@@ -299,7 +299,7 @@ fn list_rendering_shows_header_help_sessions_and_current_marker() {
     );
 
     assert!(text.contains(
-        "NORMAL — enter:switch | x:kill | g:root | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
+        "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
     ));
     assert!(text.contains("SESSION"), "header must be rendered:\n{text}");
     assert!(text.contains("[N] session >"));

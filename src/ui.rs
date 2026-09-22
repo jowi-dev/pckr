@@ -14,19 +14,29 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::actions;
-use crate::app::{App, Effect, Key, Mode};
+use crate::app::{App, Effect, Key, Mode, View};
 use crate::kill_safety::{self, KillTier};
 use crate::model;
 use crate::render;
 use crate::tmux::Tmux;
 
-const NORMAL_HELP: &str = "NORMAL — enter:switch | x:kill | g:root | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close";
+const NORMAL_HELP: &str = "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close";
+const TILES_HELP: &str = "TILES — h/l:project | enter:open | t:flat | g:root | q/esc:quit";
+const DRILLED_HELP: &str =
+    "SESSIONS — j/k:move | enter:switch | x:kill | h/esc:back | t:flat | q:quit";
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
+
+/// Fixed tile card size: width in columns, height in lines (2 border + 2
+/// content lines).
+const TILE_WIDTH: u16 = 28;
+const TILE_HEIGHT: u16 = 4;
+/// Minimum lines reserved for the detail session list below the tile grid.
+const MIN_DETAIL_HEIGHT: u16 = 6;
 
 /// Restores the terminal to its pre-TUI state (raw mode off, alternate
 /// screen left). Best-effort: called on every exit path, including from the
@@ -55,6 +65,8 @@ fn key_from_event(code: KeyCode) -> Option<Key> {
         KeyCode::Backspace => Some(Key::Backspace),
         KeyCode::Up => Some(Key::Up),
         KeyCode::Down => Some(Key::Down),
+        KeyCode::Left => Some(Key::Left),
+        KeyCode::Right => Some(Key::Right),
         _ => None,
     }
 }
@@ -153,25 +165,37 @@ fn draw(frame: &mut Frame, app: &App) {
         ])
         .split(area);
 
-    draw_help_line(frame, chunks[0], app.mode());
-    draw_table(frame, chunks[1], app);
+    draw_help_line(frame, chunks[0], app);
+    if app.view() == View::Flat {
+        draw_table(frame, chunks[1], app);
+    } else {
+        draw_tiled(frame, chunks[1], app);
+    }
     draw_prompt_line(frame, chunks[2], app);
 }
 
-fn draw_help_line(frame: &mut Frame, area: Rect, mode: Mode) {
-    let text = match mode {
-        Mode::Normal => NORMAL_HELP,
-        Mode::Insert => INSERT_HELP,
+fn draw_help_line(frame: &mut Frame, area: Rect, app: &App) {
+    let text = match app.mode() {
         Mode::ConfirmKill => CONFIRM_HELP,
+        Mode::Insert => INSERT_HELP,
+        Mode::Normal => match app.view() {
+            View::Flat => NORMAL_HELP,
+            View::Tiles => TILES_HELP,
+            View::Drilled => DRILLED_HELP,
+        },
     };
     frame.render_widget(Paragraph::new(text), area);
 }
 
 fn draw_prompt_line(frame: &mut Frame, area: Rect, app: &App) {
     let text = match app.mode() {
-        Mode::Normal => "[N] session > ".to_string(),
-        Mode::Insert => format!("[I] filter > {}", app.filter()),
         Mode::ConfirmKill => confirm_kill_prompt(app),
+        Mode::Insert => format!("[I] filter > {}", app.filter()),
+        Mode::Normal => match app.view() {
+            View::Flat => "[N] session > ".to_string(),
+            View::Tiles => "[T] project > ".to_string(),
+            View::Drilled => "[T] session > ".to_string(),
+        },
     };
     frame.render_widget(Paragraph::new(text), area);
     if app.mode() == Mode::Insert {
@@ -248,6 +272,136 @@ fn data_scroll_offset(num_rows: usize, selected: usize, viewport_height: u16) ->
     // Keep `selected` within [offset, offset + viewport_height).
     let min_offset_for_visibility = selected.saturating_sub(viewport_height - 1);
     min_offset_for_visibility.min(max_offset)
+}
+
+/// Renders the tiled master-detail layout: a project-tile grid on top and
+/// the tile-selected project's session list below. Used for `View::Tiles`
+/// and `View::Drilled`; the two differ only in which half is highlighted.
+fn draw_tiled(frame: &mut Frame, area: Rect, app: &App) {
+    let tiles = app.tiles();
+    let cols = (area.width / TILE_WIDTH).max(1) as usize;
+    let total_rows = tiles.len().div_ceil(cols.max(1));
+
+    let max_grid_height = area.height.saturating_sub(MIN_DETAIL_HEIGHT);
+    let max_visible_rows = (max_grid_height / TILE_HEIGHT) as usize;
+    let visible_rows = total_rows.min(max_visible_rows);
+
+    let selected_row = app.tile_selected() / cols.max(1);
+    let row_offset = data_scroll_offset(total_rows, selected_row, visible_rows as u16) as usize;
+
+    let grid_height = (visible_rows as u16) * TILE_HEIGHT;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(grid_height), Constraint::Min(0)])
+        .split(area);
+    let grid_area = chunks[0];
+    let detail_area = chunks[1];
+
+    draw_tile_grid(
+        frame,
+        grid_area,
+        app,
+        &tiles,
+        cols,
+        row_offset,
+        visible_rows,
+    );
+    draw_drilled_list(frame, detail_area, app);
+}
+
+/// Renders the project-tile cards, `cols` per row, starting at grid row
+/// `row_offset`, for `visible_rows` rows.
+fn draw_tile_grid(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    tiles: &[crate::app::ProjectTile],
+    cols: usize,
+    row_offset: usize,
+    visible_rows: usize,
+) {
+    for row in 0..visible_rows {
+        let tile_row = row_offset + row;
+        for col in 0..cols {
+            let tile_idx = tile_row * cols + col;
+            let Some(tile) = tiles.get(tile_idx) else {
+                continue;
+            };
+            let x = area.x + (col as u16) * TILE_WIDTH;
+            if x >= area.x + area.width {
+                continue;
+            }
+            let width = TILE_WIDTH.min(area.x + area.width - x);
+            let card_area = Rect {
+                x,
+                y: area.y + (row as u16) * TILE_HEIGHT,
+                width,
+                height: TILE_HEIGHT,
+            };
+            draw_tile_card(frame, card_area, app, tile, tile_idx);
+        }
+    }
+}
+
+fn draw_tile_card(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    tile: &crate::app::ProjectTile,
+    tile_idx: usize,
+) {
+    let selected = tile_idx == app.tile_selected();
+    let border_style = if selected {
+        let style = Style::default().fg(Color::Yellow);
+        if app.view() == View::Tiles {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
+    } else {
+        Style::default()
+    };
+
+    let title_line = Line::from(Span::styled(
+        tile.project.clone(),
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let rollup_line = Line::from(format!(
+        "{} sess  {} unmerged  {}",
+        tile.session_count, tile.unmerged_count, tile.attn
+    ));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style);
+    let paragraph = Paragraph::new(vec![title_line, rollup_line]).block(block);
+    frame.render_widget(paragraph, area);
+}
+
+/// Renders the tile-selected project's session list (header + rows), with
+/// the row-selected styling applied only when focus is on `View::Drilled`.
+fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App) {
+    let drilled: Vec<crate::model::SessionRow> = app.drilled_rows().into_iter().cloned().collect();
+    let widths = render::compute_column_widths(&drilled);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    let header_area = chunks[0];
+    let data_area = chunks[1];
+
+    frame.render_widget(Paragraph::new(header_line(&widths)), header_area);
+
+    let drilled_focus = app.view() == View::Drilled;
+    let data_lines: Vec<Line> = drilled
+        .iter()
+        .enumerate()
+        .map(|(i, row)| data_line(row, &widths, drilled_focus && i == app.drill_selected()))
+        .collect();
+
+    let scroll = data_scroll_offset(data_lines.len(), app.drill_selected(), data_area.height);
+    frame.render_widget(Paragraph::new(data_lines).scroll((scroll, 0)), data_area);
 }
 
 fn header_line(widths: &[usize; 8]) -> Line<'static> {
@@ -332,6 +486,20 @@ mod tests {
         }
     }
 
+    fn row_with(idx: usize, name: &str, project: &str, status: &str, attn: &str) -> SessionRow {
+        SessionRow {
+            name: name.to_string(),
+            idx,
+            marker: '-',
+            display_name: name.to_string(),
+            attn: attn.to_string(),
+            wt: "-".to_string(),
+            project: project.to_string(),
+            branch: "main".to_string(),
+            status: status.to_string(),
+        }
+    }
+
     fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let area = buffer.area;
@@ -356,7 +524,7 @@ mod tests {
 
         let text = buffer_text(&terminal);
         assert!(text.contains(
-            "NORMAL — enter:switch | x:kill | g:root | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
+            "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
         ));
         assert!(text.contains("[N] session >"));
         assert!(text.contains("SESSION"));
@@ -444,6 +612,109 @@ mod tests {
         assert!(
             text.contains("session-25"),
             "selected row must be within the viewport:\n{text}"
+        );
+    }
+
+    #[test]
+    fn tiles_view_renders_tile_grid_with_rollups_and_placeholder() {
+        let rows = vec![
+            row_with(1, "a1", "projx", "unmerged", "-"),
+            row_with(2, "b1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("projx"), "missing project name:\n{text}");
+        assert!(text.contains("projy"), "missing project name:\n{text}");
+        assert!(text.contains("1 sess"), "missing roll-up text:\n{text}");
+        assert!(text.contains("-"), "missing attn placeholder:\n{text}");
+        assert!(text.contains(TILES_HELP));
+        assert!(text.contains("[T] project >"));
+    }
+
+    #[test]
+    fn tiles_view_marks_selected_tile() {
+        let rows = vec![
+            row_with(1, "a1", "projx", "merged", "-"),
+            row_with(2, "b1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        // Top-left border cell of the first (selected) tile card, which
+        // starts at the top of the middle chunk (row index 1).
+        let cell = &buffer[(0, 1)];
+        assert_eq!(
+            cell.style().fg,
+            Some(Color::Yellow),
+            "selected tile border should be yellow"
+        );
+    }
+
+    #[test]
+    fn drilled_view_renders_project_scoped_session_list() {
+        let rows = vec![
+            row_with(1, "sess-aaa-1", "projx", "merged", "-"),
+            row_with(2, "sess-bbb-1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("sess-aaa-1"),
+            "missing drilled session:\n{text}"
+        );
+        assert!(
+            !text.contains("sess-bbb-1"),
+            "other project's session leaked into drilled view:\n{text}"
+        );
+        assert!(text.contains(DRILLED_HELP));
+        assert!(text.contains("[T] session >"));
+        assert!(
+            text.contains("SESSION"),
+            "detail header must render:\n{text}"
+        );
+    }
+
+    #[test]
+    fn confirm_kill_prompt_renders_in_drilled_view() {
+        let rows = vec![row_with(1, "sess-aaa-1", "projx", "unmerged", "-")];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+        app.arm_confirm_kill(
+            "sess-aaa-1".to_string(),
+            crate::kill_safety::KillTier::LiveRun,
+            "session is running a live task".to_string(),
+        );
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains(CONFIRM_HELP));
+        assert!(text
+            .contains("Kill 'sess-aaa-1' + worktree? [live run] session is running a live task"));
+        assert!(
+            text.contains("projx"),
+            "tile grid should stay visible:\n{text}"
         );
     }
 }
