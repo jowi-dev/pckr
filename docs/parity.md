@@ -155,6 +155,15 @@ client to that session and never aborts the caller.
 - List refresh re-runs the refresh hook + full list build (matching fzf
   `reload($SELF list)` behavior after kill).
 
+### Tiled view (additive, outside parity scope)
+
+`t` in NORMAL mode toggles a tiled per-project view that did not exist in
+the bash picker; it is documented in the README, not here. The flat view
+above is the parity surface: launching pckr always starts in the flat NORMAL
+mode, and every guarantee in this document holds there unchanged. The tiled
+view adds no tmux options and no `tm` dependency; its kill path reuses the
+same classification and ConfirmKill flow described above.
+
 ## Environment
 
 - `TMUX_PICKER_SOCKET` — when set, ALL tmux invocations use
