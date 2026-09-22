@@ -25,6 +25,29 @@ pub struct PendingKill {
     pub reason: String,
 }
 
+/// Which list layout the TUI is showing. `Flat` is the parity-contract
+/// default; `Tiles`/`Drilled` are the two focus states of the tiled view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Flat,
+    /// Tiled view with focus on the project-tile grid.
+    Tiles,
+    /// Tiled view drilled into the selected tile's session list.
+    Drilled,
+}
+
+/// Per-project roll-up computed locally from the rows (no tm involvement).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectTile {
+    pub project: String,
+    pub session_count: usize,
+    /// Rows whose status is exactly "unmerged".
+    pub unmerged_count: usize,
+    /// Concatenation (row order, no separator) of every row attn value that
+    /// isn't the "-" placeholder; "-" when no session has attention flags.
+    pub attn: String,
+}
+
 /// Side effect requested by a key event. `None` means "handled internally,
 /// nothing further to do" (e.g. moved selection, edited filter).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +74,9 @@ pub struct App {
     mode: Mode,
     selected: usize,
     pending_kill: Option<PendingKill>,
+    view: View,
+    tile_selected: usize,
+    drill_selected: usize,
 }
 
 /// Case-insensitive, non-contiguous subsequence match: every char of
@@ -91,6 +117,9 @@ impl App {
             mode: Mode::Normal,
             selected: 0,
             pending_kill: None,
+            view: View::Flat,
+            tile_selected: 0,
+            drill_selected: 0,
         }
     }
 
@@ -114,6 +143,68 @@ impl App {
         self.pending_kill.as_ref()
     }
 
+    /// Not yet called from `ui.rs` (tiled rendering is a later slice); kept
+    /// public and allowed dead for now, same as other pre-wired accessors.
+    #[allow(dead_code)]
+    pub fn view(&self) -> View {
+        self.view
+    }
+
+    #[allow(dead_code)]
+    pub fn tile_selected(&self) -> usize {
+        self.tile_selected
+    }
+
+    #[allow(dead_code)]
+    pub fn drill_selected(&self) -> usize {
+        self.drill_selected
+    }
+
+    /// Groups ALL rows (not the filtered view) by project, in first-
+    /// appearance order, with per-project roll-ups.
+    pub fn tiles(&self) -> Vec<ProjectTile> {
+        let mut tiles: Vec<ProjectTile> = Vec::new();
+        let mut index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for row in &self.rows {
+            let idx = *index.entry(row.project.as_str()).or_insert_with(|| {
+                tiles.push(ProjectTile {
+                    project: row.project.clone(),
+                    session_count: 0,
+                    unmerged_count: 0,
+                    attn: String::new(),
+                });
+                tiles.len() - 1
+            });
+            let tile = &mut tiles[idx];
+            tile.session_count += 1;
+            if row.status == "unmerged" {
+                tile.unmerged_count += 1;
+            }
+            if row.attn != "-" {
+                tile.attn.push_str(&row.attn);
+            }
+        }
+        for tile in &mut tiles {
+            if tile.attn.is_empty() {
+                tile.attn = "-".to_string();
+            }
+        }
+        tiles
+    }
+
+    /// Rows (original order) belonging to the currently tile-selected
+    /// project; empty if there are no tiles.
+    pub fn drilled_rows(&self) -> Vec<&SessionRow> {
+        match self.tiles().get(self.tile_selected) {
+            Some(tile) => self
+                .rows
+                .iter()
+                .filter(|r| r.project == tile.project)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Arms tiered kill confirmation: records the pending kill and switches
     /// to `Mode::ConfirmKill`.
     pub fn arm_confirm_kill(&mut self, name: String, tier: KillTier, reason: String) {
@@ -129,10 +220,26 @@ impl App {
             .collect()
     }
 
-    /// Replaces the row list (e.g. after a refresh) and clamps selection.
+    /// Replaces the row list (e.g. after a refresh) and clamps selection,
+    /// tile selection, and drill selection, falling back out of `Drilled`
+    /// if the drilled project's rows have vanished.
     pub fn set_rows(&mut self, rows: Vec<SessionRow>) {
+        let drilled_project = if self.view == View::Drilled {
+            self.tiles()
+                .get(self.tile_selected)
+                .map(|t| t.project.clone())
+        } else {
+            None
+        };
         self.rows = rows;
         self.clamp_selection();
+        self.clamp_tile_selection();
+        self.clamp_drill_selection();
+        if let Some(project) = drilled_project {
+            if !self.rows.iter().any(|r| r.project == project) {
+                self.view = View::Tiles;
+            }
+        }
     }
 
     fn clamp_selection(&mut self) {
@@ -142,6 +249,53 @@ impl App {
         } else if self.selected >= len {
             self.selected = len - 1;
         }
+    }
+
+    fn clamp_tile_selection(&mut self) {
+        let len = self.tiles().len();
+        if len == 0 {
+            self.tile_selected = 0;
+        } else if self.tile_selected >= len {
+            self.tile_selected = len - 1;
+        }
+    }
+
+    fn clamp_drill_selection(&mut self) {
+        let len = self.drilled_rows().len();
+        if len == 0 {
+            self.drill_selected = 0;
+        } else if self.drill_selected >= len {
+            self.drill_selected = len - 1;
+        }
+    }
+
+    fn move_tile_selection(&mut self, delta: isize) {
+        let len = self.tiles().len();
+        if len == 0 {
+            self.tile_selected = 0;
+            return;
+        }
+        let cur = self.tile_selected as isize;
+        let next = (cur + delta).clamp(0, len as isize - 1);
+        self.tile_selected = next as usize;
+        self.drill_selected = 0;
+    }
+
+    fn move_drill_selection(&mut self, delta: isize) {
+        let len = self.drilled_rows().len();
+        if len == 0 {
+            self.drill_selected = 0;
+            return;
+        }
+        let cur = self.drill_selected as isize;
+        let next = (cur + delta).clamp(0, len as isize - 1);
+        self.drill_selected = next as usize;
+    }
+
+    fn drilled_selected_name(&self) -> Option<String> {
+        self.drilled_rows()
+            .get(self.drill_selected)
+            .map(|r| r.name.clone())
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -190,7 +344,20 @@ impl App {
     }
 
     fn handle_normal_key(&mut self, key: Key) -> Effect {
+        match self.view {
+            View::Flat => self.handle_normal_flat_key(key),
+            View::Tiles => self.handle_tiles_key(key),
+            View::Drilled => self.handle_drilled_key(key),
+        }
+    }
+
+    fn handle_normal_flat_key(&mut self, key: Key) -> Effect {
         match key {
+            Key::Char('t') => {
+                self.view = View::Tiles;
+                self.clamp_tile_selection();
+                Effect::None
+            }
             Key::Char('j') | Key::Down => {
                 self.move_selection(1);
                 Effect::None
@@ -225,6 +392,65 @@ impl App {
         }
     }
 
+    fn handle_tiles_key(&mut self, key: Key) -> Effect {
+        match key {
+            Key::Char('t') => {
+                self.view = View::Flat;
+                Effect::None
+            }
+            Key::Char('h') | Key::Left => {
+                self.move_tile_selection(-1);
+                Effect::None
+            }
+            Key::Char('l') | Key::Right => {
+                self.move_tile_selection(1);
+                Effect::None
+            }
+            Key::Enter | Key::Char('j') | Key::Down => {
+                if !self.drilled_rows().is_empty() {
+                    self.view = View::Drilled;
+                    self.drill_selected = 0;
+                }
+                Effect::None
+            }
+            Key::Char('q') | Key::Esc => Effect::Quit,
+            Key::Char('g') => Effect::JumpRoot,
+            _ => Effect::None,
+        }
+    }
+
+    fn handle_drilled_key(&mut self, key: Key) -> Effect {
+        match key {
+            Key::Char('j') | Key::Down => {
+                self.move_drill_selection(1);
+                Effect::None
+            }
+            Key::Char('k') | Key::Up => {
+                self.move_drill_selection(-1);
+                Effect::None
+            }
+            Key::Enter => match self.drilled_selected_name() {
+                Some(name) => Effect::Switch(name),
+                None => Effect::None,
+            },
+            Key::Char('x') => match self.drilled_selected_name() {
+                Some(name) => Effect::RequestKill(name),
+                None => Effect::None,
+            },
+            Key::Char('h') | Key::Left | Key::Esc => {
+                self.view = View::Tiles;
+                Effect::None
+            }
+            Key::Char('t') => {
+                self.view = View::Flat;
+                Effect::None
+            }
+            Key::Char('q') => Effect::Quit,
+            Key::Char('g') => Effect::JumpRoot,
+            _ => Effect::None,
+        }
+    }
+
     fn handle_insert_key(&mut self, key: Key) -> Effect {
         match key {
             Key::Char(c) => {
@@ -251,6 +477,7 @@ impl App {
                 self.mode = Mode::Normal;
                 Effect::None
             }
+            Key::Left | Key::Right => Effect::None,
         }
     }
 
@@ -280,6 +507,11 @@ pub enum Key {
     Backspace,
     Up,
     Down,
+    /// Not yet emitted by `ui.rs` (tiled rendering is a later slice).
+    #[allow(dead_code)]
+    Left,
+    #[allow(dead_code)]
+    Right,
 }
 
 #[cfg(test)]
@@ -302,6 +534,20 @@ mod tests {
 
     fn rows(names: &[&str]) -> Vec<SessionRow> {
         names.iter().map(|n| row(n)).collect()
+    }
+
+    fn row_with(name: &str, project: &str, status: &str, attn: &str) -> SessionRow {
+        SessionRow {
+            name: name.to_string(),
+            idx: 1,
+            marker: '-',
+            display_name: name.to_string(),
+            attn: attn.to_string(),
+            wt: "-".to_string(),
+            project: project.to_string(),
+            branch: "-".to_string(),
+            status: status.to_string(),
+        }
     }
 
     // --- subsequence filter ---
@@ -519,5 +765,226 @@ mod tests {
         app.handle_key(Key::Char('j'));
         app.handle_key(Key::Char('j'));
         assert_eq!(app.selected(), 1);
+    }
+
+    // --- tiled view ---
+
+    #[test]
+    fn tiles_group_by_project_in_first_appearance_order_with_rollups() {
+        let app = App::new(vec![
+            row_with("a1", "proj-a", "unmerged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+            row_with("a2", "proj-a", "merged", "!"),
+        ]);
+        let tiles = app.tiles();
+        assert_eq!(tiles.len(), 2);
+        assert_eq!(tiles[0].project, "proj-a");
+        assert_eq!(tiles[0].session_count, 2);
+        assert_eq!(tiles[0].unmerged_count, 1);
+        assert_eq!(tiles[0].attn, "!");
+        assert_eq!(tiles[1].project, "proj-b");
+        assert_eq!(tiles[1].session_count, 1);
+        assert_eq!(tiles[1].unmerged_count, 0);
+        assert_eq!(tiles[1].attn, "-");
+    }
+
+    #[test]
+    fn t_in_normal_flat_enters_tiles_and_t_returns_to_flat() {
+        let mut app = App::new(rows(&["alpha"]));
+        assert_eq!(app.view(), View::Flat);
+        let effect = app.handle_key(Key::Char('t'));
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.view(), View::Tiles);
+        let effect2 = app.handle_key(Key::Char('t'));
+        assert_eq!(effect2, Effect::None);
+        assert_eq!(app.view(), View::Flat);
+    }
+
+    #[test]
+    fn t_in_insert_mode_edits_filter_not_view() {
+        let mut app = App::new(rows(&["alpha"]));
+        app.handle_key(Key::Char('i'));
+        let effect = app.handle_key(Key::Char('t'));
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.filter(), "t");
+        assert_eq!(app.view(), View::Flat);
+    }
+
+    #[test]
+    fn h_l_move_tile_selection_and_clamp() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+        ]);
+        app.handle_key(Key::Char('t'));
+        assert_eq!(app.tile_selected(), 0);
+
+        app.handle_key(Key::Char('h'));
+        assert_eq!(app.tile_selected(), 0, "clamped at 0");
+
+        app.drill_selected = 3;
+        app.handle_key(Key::Char('l'));
+        assert_eq!(app.tile_selected(), 1);
+        assert_eq!(
+            app.drill_selected(),
+            0,
+            "changing tile resets drill_selected"
+        );
+
+        app.handle_key(Key::Right);
+        assert_eq!(app.tile_selected(), 1, "clamped at last tile");
+    }
+
+    #[test]
+    fn enter_on_tile_drills_into_project_sessions() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+            row_with("a2", "proj-a", "merged", "-"),
+        ]);
+        app.handle_key(Key::Char('t'));
+        let effect = app.handle_key(Key::Enter);
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.view(), View::Drilled);
+        let names: Vec<&str> = app
+            .drilled_rows()
+            .into_iter()
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["a1", "a2"]);
+    }
+
+    #[test]
+    fn drilled_j_k_move_and_enter_switches_to_selected_session() {
+        let mut a1 = row_with("a1-name", "proj-a", "merged", "-");
+        a1.display_name = "A1 Display".to_string();
+        let mut a2 = row_with("a2-name", "proj-a", "merged", "-");
+        a2.display_name = "A2 Display".to_string();
+        let mut app = App::new(vec![a1, a2]);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+        assert_eq!(app.view(), View::Drilled);
+        assert_eq!(app.drill_selected(), 0);
+
+        app.handle_key(Key::Char('j'));
+        assert_eq!(app.drill_selected(), 1);
+        app.handle_key(Key::Char('j'));
+        assert_eq!(app.drill_selected(), 1, "clamp at last");
+
+        app.handle_key(Key::Char('k'));
+        assert_eq!(app.drill_selected(), 0);
+
+        app.handle_key(Key::Char('j'));
+        let effect = app.handle_key(Key::Enter);
+        assert_eq!(effect, Effect::Switch("a2-name".to_string()));
+    }
+
+    #[test]
+    fn drilled_x_requests_kill_of_selected_session() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("a2", "proj-a", "merged", "-"),
+        ]);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+        app.handle_key(Key::Char('j'));
+        let effect = app.handle_key(Key::Char('x'));
+        assert_eq!(effect, Effect::RequestKill("a2".to_string()));
+    }
+
+    #[test]
+    fn drilled_h_or_esc_returns_to_tiles_without_quitting() {
+        for key in [Key::Char('h'), Key::Esc, Key::Left] {
+            let mut app = App::new(vec![row_with("a1", "proj-a", "merged", "-")]);
+            app.handle_key(Key::Char('t'));
+            app.handle_key(Key::Enter);
+            assert_eq!(app.view(), View::Drilled);
+            let effect = app.handle_key(key);
+            assert_eq!(effect, Effect::None);
+            assert_eq!(
+                app.view(),
+                View::Tiles,
+                "key {key:?} should return to Tiles"
+            );
+        }
+    }
+
+    #[test]
+    fn esc_in_tiles_quits() {
+        let mut app = App::new(rows(&["alpha"]));
+        app.handle_key(Key::Char('t'));
+        let effect = app.handle_key(Key::Esc);
+        assert_eq!(effect, Effect::Quit);
+    }
+
+    #[test]
+    fn q_in_drilled_quits() {
+        let mut app = App::new(vec![row_with("a1", "proj-a", "merged", "-")]);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+        let effect = app.handle_key(Key::Char('q'));
+        assert_eq!(effect, Effect::Quit);
+    }
+
+    #[test]
+    fn set_rows_falls_back_to_tiles_when_drilled_project_vanishes() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+        ]);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+        assert_eq!(app.view(), View::Drilled);
+
+        app.set_rows(vec![row_with("b1", "proj-b", "merged", "-")]);
+        assert_eq!(app.view(), View::Tiles);
+        assert_eq!(app.tile_selected(), 0);
+    }
+
+    #[test]
+    fn confirm_kill_flow_preserves_tiled_view() {
+        let mut app = App::new(vec![row_with("a1", "proj-a", "merged", "-")]);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+        assert_eq!(app.view(), View::Drilled);
+
+        app.arm_confirm_kill("a1".to_string(), KillTier::LiveRun, "reason".to_string());
+        assert_eq!(app.mode(), Mode::ConfirmKill);
+        let effect = app.handle_key(Key::Char('y'));
+        assert_eq!(effect, Effect::Kill("a1".to_string()));
+        assert_eq!(app.mode(), Mode::Normal);
+        assert_eq!(app.view(), View::Drilled);
+
+        app.arm_confirm_kill("a1".to_string(), KillTier::LiveRun, "reason".to_string());
+        let effect2 = app.handle_key(Key::Char('n'));
+        assert_eq!(effect2, Effect::None);
+        assert_eq!(app.mode(), Mode::Normal);
+        assert_eq!(app.view(), View::Drilled);
+    }
+
+    #[test]
+    fn digits_and_i_are_noops_in_tiled_views() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+        ]);
+        app.handle_key(Key::Char('t'));
+        for key in [Key::Char('1'), Key::Char('i')] {
+            let effect = app.handle_key(key);
+            assert_eq!(effect, Effect::None);
+            assert_eq!(app.mode(), Mode::Normal);
+            assert_eq!(app.view(), View::Tiles);
+            assert_eq!(app.tile_selected(), 0);
+        }
+
+        app.handle_key(Key::Enter);
+        assert_eq!(app.view(), View::Drilled);
+        for key in [Key::Char('1'), Key::Char('i')] {
+            let effect = app.handle_key(key);
+            assert_eq!(effect, Effect::None);
+            assert_eq!(app.mode(), Mode::Normal);
+            assert_eq!(app.view(), View::Drilled);
+            assert_eq!(app.drill_selected(), 0);
+        }
     }
 }
