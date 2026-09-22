@@ -48,6 +48,7 @@ NORMAL mode:
 | `g` | Jump to root session of the current session, exit |
 | `1`-`9` | Jump to and switch to the Nth visible row |
 | `i` | Enter INSERT (filter) mode |
+| `t` | Toggle tiled view |
 | `q` / `esc` | Quit |
 
 INSERT mode:
@@ -59,6 +60,43 @@ INSERT mode:
 | `enter` | Switch to selected match, exit |
 | `esc` | Return to NORMAL, keeping the filter applied |
 
+Tiled view, TILES focus (tile grid):
+
+| Key | Action |
+|---|---|
+| `h` / `l` / left/right arrows | Move across tiles |
+| `enter` / `j` | Open the selected project's session list |
+| `t` | Return to flat view |
+| `g` | Jump to root session of the current session, exit |
+| `q` / `esc` | Quit |
+
+Tiled view, SESSIONS focus (drilled session list):
+
+| Key | Action |
+|---|---|
+| `j` / `k` | Move selection |
+| `enter` | Switch to selected session, exit |
+| `x` | Kill selected session, same tiered confirmation as flat view |
+| `h` / `esc` | Back to tiles |
+| `t` | Return to flat view |
+| `q` | Quit |
+
+## Tiled view
+
+Pressing `t` in NORMAL mode switches from the flat session list to a tiled,
+per-project view; `t` again returns to flat. Sessions are grouped into one
+tile per project, using the same PROJECT value shown in the flat list
+(resolved locally from git). Each tile shows a roll-up computed locally from
+its session rows: session count, unmerged-branch count, and the aggregated
+`@picker_status`/`@picker_server` attention flags, concatenated with no
+separator — `-` when none of the sessions have flags set. No `tm` or other
+external tool is involved; the tiled view works fully without `tm` on
+`PATH`.
+
+The layout is master-detail: the tile grid stays on top, and the selected
+tile's sessions are listed below once you drill in (`enter` or `j` from
+TILES focus). The filter (`i`, INSERT mode) applies to the flat view only.
+
 ## Plugin contract
 
 pckr renders the per-session tmux user options `@picker_status` and
@@ -66,7 +104,9 @@ pckr renders the per-session tmux user options `@picker_status` and
 tool may set them with `tmux set-option -t <session> @picker_status "❓"`.
 pckr also runs the global `@picker_refresh_cmd` (via `sh -c`) before each
 list build, initial and every refresh. These option names and semantics are
-a frozen public contract other tools can depend on.
+a frozen public contract other tools can depend on. The tiled view's
+per-tile attention roll-up reads these same two options and adds no new
+ones.
 
 ## Kill confirmation
 
