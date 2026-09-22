@@ -884,6 +884,111 @@ fn digit_jump_switches_and_pckr_exits_cleanly() {
     );
 }
 
+// --- (e2) tiled view ----------------------------------------------------
+
+#[test]
+fn tiled_view_drill_in_and_switch() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("tiled");
+
+    // Two git repos with distinct, known basenames so the PROJECT column
+    // (basename of the git-common-dir parent) is deterministic.
+    let repos_parent = fresh_dir("tiled-repos");
+    let repo_a = repos_parent.join("proj-aaa");
+    std::fs::create_dir_all(&repo_a).unwrap();
+    git(&repo_a, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo_a.join("f.txt"), "a\n").unwrap();
+    git(&repo_a, &["add", "f.txt"]);
+    git_commit(&repo_a, "initial");
+
+    let repo_b = repos_parent.join("proj-bbb");
+    std::fs::create_dir_all(&repo_b).unwrap();
+    git(&repo_b, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo_b.join("f.txt"), "b\n").unwrap();
+    git(&repo_b, &["add", "f.txt"]);
+    git_commit(&repo_b, "initial");
+
+    let dir_host = fresh_dir("tiled-host");
+    let marker_dir = fresh_dir("tiled-marker");
+    let marker_path = marker_dir.join("exit-code");
+
+    // Tile row order follows first-appearance order in `list-sessions`
+    // (tmux lists sessions alphabetically by name): sess-a1 < sess-a2 <
+    // sess-b1 < zz-pckr-host, so tiles appear proj-aaa, proj-bbb, then `-`.
+    server.new_session("sess-a1", &repo_a, &["sh"]);
+    server.new_session("sess-a2", &repo_a, &["sh"]);
+    server.new_session("sess-b1", &repo_b, &["sh"]);
+    let argv = pckr_argv_with_exit_marker(&server.socket, &marker_path);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("zz-pckr-host", &dir_host, &argv_ref);
+
+    // Wait for the flat picker first.
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| {
+            t.contains("sess-a1")
+                && t.contains("sess-a2")
+                && t.contains("sess-b1")
+                && t.contains("NORMAL — enter:switch")
+        },
+    );
+
+    // Switch to the tiled view.
+    server.send_literal("zz-pckr-host", "t");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| {
+            t.contains("TILES —")
+                && t.contains("proj-aaa")
+                && t.contains("proj-bbb")
+                && t.contains("2 sess")
+        },
+    );
+    assert!(
+        text.contains("TILES — h/l:project | enter:open | t:flat | g:root | q/esc:quit"),
+        "tiled help line must be rendered:\n{text}"
+    );
+    assert!(text.contains("[T] project >"));
+
+    // Move right to the proj-bbb tile, then drill in.
+    server.send_literal("zz-pckr-host", "l");
+    server.send_key("zz-pckr-host", "Enter");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("SESSIONS —") && t.contains("sess-b1"),
+    );
+    assert!(
+        text.contains("SESSIONS — j/k:move | enter:switch | x:kill | h/esc:back | t:flat | q:quit")
+    );
+    assert!(text.contains("[T] session >"));
+    assert!(
+        !text.contains("sess-a1"),
+        "proj-bbb's drilled session list must not show proj-aaa's session:\n{text}"
+    );
+
+    // Switch to the selected session.
+    server.send_key("zz-pckr-host", "Enter");
+
+    // No client is ever attached to this detached test server (see
+    // `digit_jump_switches_and_pckr_exits_cleanly`), so the only
+    // observable proof that Effect::Switch ran is pckr exiting cleanly.
+    let exit_code = wait_for(
+        DEFAULT_TIMEOUT,
+        || std::fs::read_to_string(&marker_path).unwrap_or_default(),
+        |t| !t.trim().is_empty(),
+    );
+    assert_eq!(
+        exit_code.trim(),
+        "0",
+        "pckr must exit 0 after a tiled-view switch"
+    );
+}
+
 // --- (f) jump-root as CLI ---------------------------------------------------
 
 #[test]
