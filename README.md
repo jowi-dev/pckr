@@ -34,7 +34,8 @@ bind g run-shell "pckr jump-root"
 Optionally set `@picker_refresh_cmd` (e.g. `set -g @picker_refresh_cmd
 "phoenix-picker-server.sh detect"`) to run an arbitrary shell command before
 each list build, letting other tools refresh session metadata just before
-pckr renders it.
+pckr renders it. You can also set `@picker_tile_cmd` to run a per-project
+command in the tiled view (see Plugin contract below).
 
 ## Keys
 
@@ -86,12 +87,12 @@ Tiled view, SESSIONS focus (drilled session list):
 Pressing `t` in NORMAL mode switches from the flat session list to a tiled,
 per-project view; `t` again returns to flat. Sessions are grouped into one
 tile per project, using the same PROJECT value shown in the flat list
-(resolved locally from git). Each tile shows a roll-up computed locally from
-its session rows: session count, unmerged-branch count, and the aggregated
-`@picker_status`/`@picker_server` attention flags, concatenated with no
-separator — `-` when none of the sessions have flags set. No `tm` or other
-external tool is involved; the tiled view works fully without `tm` on
-`PATH`.
+(resolved locally from git). Each tile shows a roll-up: session count,
+unmerged-branch count, the aggregated `@picker_status`/`@picker_server`
+attention flags (concatenated with no separator, or `-` when none set), and
+a ready count from `@picker_tile_cmd` (shown as `<value> ready`, or `- ready`
+if unset or unavailable). pckr itself never calls `tm`; the tiled view
+works fully without `tm` on `PATH`.
 
 The layout is master-detail: the tile grid stays on top, and the selected
 tile's sessions are listed below once you drill in (`enter` or `j` from
@@ -106,9 +107,26 @@ pckr renders the per-session tmux user options `@picker_status` and
 tool may set them with `tmux set-option -t <session> @picker_status "❓"`.
 pckr also runs the global `@picker_refresh_cmd` (via `sh -c`) before each
 list build, initial and every refresh. These option names and semantics are
-a frozen public contract other tools can depend on. The tiled view's
-per-tile attention roll-up reads these same two options and adds no new
-ones.
+a frozen public contract other tools can depend on.
+
+The global `@picker_tile_cmd` option runs a shell command once per project
+at each list build. The command runs as `sh -c "$cmd" sh <project> <root>`,
+where `$1` is the project name and `$2` is the project root, with working
+directory set to the root. All projects' commands run concurrently with a
+one-second deadline; commands still running at the deadline are killed. pckr
+reads the first line of stdout (trimmed) and displays it on the tile as
+`<value> ready`. If the option is unset, the command exits non-zero, produces
+no output, or times out, the tile shows `- ready`; nothing is logged or
+displayed. Sessions outside a git repo have no root, so their tile always
+shows `- ready`. This option is optional and joins the frozen contract
+family. For example, a writer script that prints a `tm ready` count:
+
+```tmux
+set -g @picker_tile_cmd '~/bin/ready-count'
+```
+
+The tiled view's per-tile attention roll-up reads only the two per-session
+options above; the ready line is the only thing `@picker_tile_cmd` feeds.
 
 ## Kill confirmation
 

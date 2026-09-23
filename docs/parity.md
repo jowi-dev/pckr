@@ -161,8 +161,9 @@ client to that session and never aborts the caller.
 the bash picker; it is documented in the README, not here. The flat view
 above is the parity surface: launching pckr always starts in the flat NORMAL
 mode, and every guarantee in this document holds there unchanged. The tiled
-view adds no tmux options and no `tm` dependency; its kill path reuses the
-same classification and ConfirmKill flow described above.
+view adds one optional global tmux option, `@picker_tile_cmd` (documented in
+the README), and no `tm` dependency; its kill path reuses the same
+classification and ConfirmKill flow described above.
 
 ## Environment
 
@@ -177,3 +178,6 @@ same classification and ConfirmKill flow described above.
   (claude-picker-attention.sh); pckr only renders the option value.
 - Phoenix detection stays in phoenix-picker-server.sh; pckr only runs the
   generic `@picker_refresh_cmd`.
+- Ready-ticket logic (which issues count as ready to pick up, e.g. via
+  `tm ready`) stays in the writer script behind `@picker_tile_cmd`; pckr
+  only runs the command and renders its first stdout line.
