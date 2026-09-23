@@ -14,7 +14,8 @@ use crate::tmux::Tmux;
 
 /// One row of the session list. Field order mirrors the table columns; the
 /// `--plain` TSV in docs/parity.md uses the same order except `runner`,
-/// which is appended last (field 10) so positional consumers are unaffected.
+/// which is appended last (field 10) so positional consumers are unaffected,
+/// and the display-only `phase` (from `@picker_phase`), which `--plain` omits.
 /// `name` doubles as both the machine key (field 1) and the display copy
 /// (field 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,7 @@ pub struct SessionRow {
     pub display_name: String,
     pub attn: String,
     pub runner: String,
+    pub phase: String,
     pub wt: String,
     pub project: String,
     pub branch: String,
@@ -47,6 +49,15 @@ pub fn runner_string(runner: &str) -> String {
         "-".to_string()
     } else {
         runner.to_string()
+    }
+}
+
+/// `@picker_phase` value, or `-` when empty (no phase set).
+pub fn phase_string(phase: &str) -> String {
+    if phase.is_empty() {
+        "-".to_string()
+    } else {
+        phase.to_string()
     }
 }
 
@@ -95,6 +106,8 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 }
             };
 
+            let phase = phase_string(&s.picker_phase);
+
             SessionRow {
                 name: s.name.clone(),
                 idx,
@@ -102,6 +115,7 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 display_name: s.name,
                 attn,
                 runner,
+                phase,
                 wt,
                 project,
                 branch,
@@ -395,5 +409,17 @@ mod tests {
     #[test]
     fn runner_passes_through_verbatim_token() {
         assert_eq!(runner_string("my-agent"), "my-agent");
+    }
+
+    #[test]
+    fn phase_returns_dash_when_empty() {
+        assert_eq!(phase_string(""), "-");
+    }
+
+    #[test]
+    fn phase_returns_value_verbatim() {
+        assert_eq!(phase_string("started"), "started");
+        assert_eq!(phase_string("working"), "working");
+        assert_eq!(phase_string("review"), "review");
     }
 }

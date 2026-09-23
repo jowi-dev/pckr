@@ -15,6 +15,7 @@ pub struct SessionEntry {
     pub picker_status: String,
     pub picker_server: String,
     pub picker_runner: String,
+    pub picker_phase: String,
 }
 
 /// Wraps `std::process::Command` invocations of `tmux`, transparently
@@ -46,14 +47,14 @@ impl Tmux {
         cmd
     }
 
-    /// `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}'`
+    /// `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}'`
     pub fn list_sessions(&self) -> Vec<SessionEntry> {
         let output = self
             .command()
             .args([
                 "list-sessions",
                 "-F",
-                "#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}",
+                "#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}",
             ])
             .output();
 
@@ -65,18 +66,20 @@ impl Tmux {
         let text = String::from_utf8_lossy(&output.stdout);
         text.lines()
             .filter_map(|line| {
-                let mut parts = line.splitn(5, '|');
+                let mut parts = line.splitn(6, '|');
                 let name = parts.next()?.to_string();
                 let path = parts.next()?.to_string();
                 let picker_status = parts.next().unwrap_or("").to_string();
                 let picker_server = parts.next().unwrap_or("").to_string();
                 let picker_runner = parts.next().unwrap_or("").to_string();
+                let picker_phase = parts.next().unwrap_or("").to_string();
                 Some(SessionEntry {
                     name,
                     path,
                     picker_status,
                     picker_server,
                     picker_runner,
+                    picker_phase,
                 })
             })
             .collect()
