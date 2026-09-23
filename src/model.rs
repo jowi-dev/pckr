@@ -133,8 +133,9 @@ pub fn parse_tile_output(success: bool, stdout: &str) -> Option<String> {
 }
 
 /// Runs `cmd` once per project as `sh -c <cmd> sh <project> <root>` (so the
-/// script sees `$1` = project name, `$2` = project root) with the root as
-/// working directory. All commands run concurrently under one shared
+/// command line sees `$1` = project name, `$2` = project root) with the root
+/// as working directory and `PICKER_PROJECT` / `PICKER_ROOT` exported, so a
+/// script named directly as the command still receives both. All commands run concurrently under one shared
 /// `timeout`; any still running at the deadline are killed. Returns project
 /// name -> value (see `parse_tile_output`); failed, empty, or timed-out
 /// projects get no entry.
@@ -156,6 +157,8 @@ pub fn run_tile_cmds(
             .arg(project)
             .arg(root)
             .current_dir(root)
+            .env("PICKER_PROJECT", project)
+            .env("PICKER_ROOT", root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -299,6 +302,19 @@ mod tests {
         let projects = vec![("proj".to_string(), root.clone())];
         let results = run_tile_cmds("printf '%s' \"$2\"", &projects, Duration::from_secs(5));
         assert_eq!(results.get("proj"), Some(&root_str));
+    }
+
+    #[test]
+    fn run_tile_cmds_exports_project_and_root_env() {
+        let root = std::env::temp_dir();
+        let projects = vec![("proj".to_string(), root.clone())];
+        let results = run_tile_cmds(
+            "printf '%s|%s' \"$PICKER_PROJECT\" \"$PICKER_ROOT\"",
+            &projects,
+            Duration::from_secs(5),
+        );
+        let expected = format!("proj|{}", root.to_string_lossy());
+        assert_eq!(results.get("proj"), Some(&expected));
     }
 
     #[test]
