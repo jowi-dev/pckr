@@ -675,6 +675,70 @@ fn usage_header_renders_picker_usage_and_rereads_on_refresh() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn pr_column_renders_picker_pr_in_flat_and_drilled_views() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("pr-column");
+
+    let dir_a = fresh_dir("pr-a");
+    let dir_b = fresh_dir("pr-b");
+    let dir_host = fresh_dir("pr-host");
+
+    server.new_session("session-a", &dir_a, &["sh"]);
+    server.new_session("session-b", &dir_b, &["sh"]);
+    server.set_option("session-a", "@picker_pr", "ci:pass rev:1/1");
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("session-b"),
+    );
+
+    // Check PR column is present in flat view
+    assert!(
+        text.contains("ci:pass rev:1/1"),
+        "PR value must render in flat view:\n{text}"
+    );
+    assert!(
+        text.contains("STATUS  PR"),
+        "PR column header must appear in flat view:\n{text}"
+    );
+
+    // Switch to tiled view
+    server.send_literal("pckr-host", "t");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("TILES —"),
+    );
+    assert!(text.contains("TILES —"));
+
+    // Drill into the first tile (session-a's project)
+    server.send_key("pckr-host", "Enter");
+
+    // Wait for drilled view to load and check PR value is present
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("SESSIONS —"),
+    );
+
+    assert!(
+        text.contains("ci:pass rev:1/1"),
+        "PR value must render in drilled view:\n{text}"
+    );
+
+    // Quit with 'q'
+    server.send_key("pckr-host", "q");
+}
+
 // --- (c) modal safety -----------------------------------------------------
 
 #[test]

@@ -116,7 +116,7 @@ pub fn subsequence_match(haystack: &str, needle: &str) -> bool {
 /// Concatenation of a row's visible cells used as the filter haystack.
 fn row_haystack(row: &SessionRow) -> String {
     format!(
-        "{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}",
         row.display_name,
         row.attn,
         row.runner,
@@ -124,7 +124,8 @@ fn row_haystack(row: &SessionRow) -> String {
         row.wt,
         row.project,
         row.branch,
-        row.status
+        row.status,
+        row.pr
     )
 }
 
@@ -575,6 +576,7 @@ mod tests {
             project: "-".to_string(),
             branch: "-".to_string(),
             status: "-".to_string(),
+            pr: String::new(),
         }
     }
 
@@ -605,6 +607,7 @@ mod tests {
             project: project.to_string(),
             branch: "-".to_string(),
             status: status.to_string(),
+            pr: String::new(),
         }
     }
 
