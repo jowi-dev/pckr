@@ -31,12 +31,11 @@ const DRILLED_HELP: &str =
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 
-/// Fixed tile card size: width in columns, height in lines (2 border + 3
-/// content lines).
-const TILE_WIDTH: u16 = 28;
-const TILE_HEIGHT: u16 = 5;
-/// Minimum lines reserved for the detail session list below the tile grid.
-const MIN_DETAIL_HEIGHT: u16 = 6;
+/// Minimum tile card dimensions: width in columns, height in lines
+/// (2 border + 3 content lines: title, counts, ready — the floor that keeps
+/// each line legible).
+const MIN_TILE_WIDTH: u16 = 28;
+const MIN_TILE_HEIGHT: u16 = 5;
 
 /// Restores the terminal to its pre-TUI state (raw mode off, alternate
 /// screen left). Best-effort: called on every exit path, including from the
@@ -280,43 +279,57 @@ fn data_scroll_offset(num_rows: usize, selected: usize, viewport_height: u16) ->
     min_offset_for_visibility.min(max_offset)
 }
 
-/// Renders the tiled master-detail layout: a project-tile grid on top and
-/// the tile-selected project's session list below. Used for `View::Tiles`
-/// and `View::Drilled`; the two differ only in which half is highlighted.
+/// Computes tile grid dimensions given the number of tiles and available area.
+/// Returns (cols, visible_rows): the number of columns and the number of visible
+/// rows that fit in the area.
+fn tile_grid_dims(num_tiles: usize, area: Rect) -> (usize, usize) {
+    let cols = ((area.width / MIN_TILE_WIDTH).max(1) as usize).min(num_tiles.max(1));
+    let total_rows = num_tiles.div_ceil(cols);
+    let visible_rows = total_rows.min(((area.height / MIN_TILE_HEIGHT).max(1)) as usize);
+    (cols, visible_rows)
+}
+
+/// Renders the tiled view. In `View::Tiles`, the tile grid fills the whole
+/// area. In `View::Drilled`, a breadcrumb naming the selected project is
+/// rendered on line 0, and the project's session list (header + rows) fills
+/// the rest.
 fn draw_tiled(frame: &mut Frame, area: Rect, app: &App) {
     let tiles = app.tiles();
-    let cols = (area.width / TILE_WIDTH).max(1) as usize;
-    let total_rows = tiles.len().div_ceil(cols.max(1));
 
-    let max_grid_height = area.height.saturating_sub(MIN_DETAIL_HEIGHT);
-    let max_visible_rows = (max_grid_height / TILE_HEIGHT) as usize;
-    let visible_rows = total_rows.min(max_visible_rows);
-
-    let selected_row = app.tile_selected() / cols.max(1);
-    let row_offset = data_scroll_offset(total_rows, selected_row, visible_rows as u16) as usize;
-
-    let grid_height = (visible_rows as u16) * TILE_HEIGHT;
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(grid_height), Constraint::Min(0)])
-        .split(area);
-    let grid_area = chunks[0];
-    let detail_area = chunks[1];
-
-    draw_tile_grid(
-        frame,
-        grid_area,
-        app,
-        &tiles,
-        cols,
-        row_offset,
-        visible_rows,
-    );
-    draw_drilled_list(frame, detail_area, app);
+    match app.view() {
+        View::Tiles => {
+            let (cols, visible_rows) = tile_grid_dims(tiles.len(), area);
+            let selected_row = app.tile_selected() / cols.max(1);
+            let row_offset = data_scroll_offset(
+                tiles.len().div_ceil(cols.max(1)),
+                selected_row,
+                visible_rows as u16,
+            ) as usize;
+            draw_tile_grid(frame, area, app, &tiles, cols, row_offset, visible_rows);
+        }
+        View::Drilled => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(area);
+            let project_name = tiles
+                .get(app.tile_selected())
+                .map(|t| t.project.clone())
+                .unwrap_or_default();
+            let breadcrumb = format!("tiles › {}", project_name);
+            frame.render_widget(
+                Paragraph::new(breadcrumb).style(Style::default().add_modifier(Modifier::BOLD)),
+                chunks[0],
+            );
+            draw_drilled_list(frame, chunks[1], app);
+        }
+        View::Flat => {} // Flat view is drawn by draw_table.
+    }
 }
 
 /// Renders the project-tile cards, `cols` per row, starting at grid row
-/// `row_offset`, for `visible_rows` rows.
+/// `row_offset`, for `visible_rows` rows. Cards stretch to fill grid cells
+/// equally, with the last column and last row expanding to fill remaining space.
 fn draw_tile_grid(
     frame: &mut Frame,
     area: Rect,
@@ -326,6 +339,9 @@ fn draw_tile_grid(
     row_offset: usize,
     visible_rows: usize,
 ) {
+    let card_width = area.width / cols as u16;
+    let card_height = area.height / visible_rows as u16;
+
     for row in 0..visible_rows {
         let tile_row = row_offset + row;
         for col in 0..cols {
@@ -333,34 +349,39 @@ fn draw_tile_grid(
             let Some(tile) = tiles.get(tile_idx) else {
                 continue;
             };
-            let x = area.x + (col as u16) * TILE_WIDTH;
-            if x >= area.x + area.width {
-                continue;
-            }
-            let width = TILE_WIDTH.min(area.x + area.width - x);
+
+            let actual_width = if col == cols - 1 {
+                area.width - (col as u16) * card_width
+            } else {
+                card_width
+            };
+
+            let actual_height = if row == visible_rows - 1 {
+                area.height - (row as u16) * card_height
+            } else {
+                card_height
+            };
+
             let card_area = Rect {
-                x,
-                y: area.y + (row as u16) * TILE_HEIGHT,
-                width,
-                height: TILE_HEIGHT,
+                x: area.x + (col as u16) * card_width,
+                y: area.y + (row as u16) * card_height,
+                width: actual_width,
+                height: actual_height,
             };
             draw_tile_card(frame, card_area, app, tile, tile_idx);
         }
     }
 }
 
-/// Computes the style for a tile card based on selection and view focus.
-fn tile_card_style(selected: bool, view: View) -> Style {
+/// Computes the style for a tile card based on selection. The grid is only
+/// drawn in Tiles view, so selected tiles receive REVERSED + BOLD + yellow.
+fn tile_card_style(selected: bool) -> Style {
     if !selected {
         return Style::default();
     }
-    match view {
-        View::Tiles => Style::default()
-            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-            .fg(Color::Yellow),
-        View::Drilled => Style::default().bg(Color::DarkGray).fg(Color::Yellow),
-        View::Flat => Style::default().fg(Color::Yellow),
-    }
+    Style::default()
+        .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        .fg(Color::Yellow)
 }
 
 fn draw_tile_card(
@@ -371,7 +392,7 @@ fn draw_tile_card(
     tile_idx: usize,
 ) {
     let selected = tile_idx == app.tile_selected();
-    let card_style = tile_card_style(selected, app.view());
+    let card_style = tile_card_style(selected);
 
     let title_line = Line::from(Span::styled(
         tile.project.clone(),
@@ -578,7 +599,7 @@ mod tests {
     fn flat_view_runner_column_renders_value() {
         let mut row_with_runner = row(1, "sess-runner", "merged");
         row_with_runner.runner = "opencode".to_string();
-        let app = App::new(vec![row_with_runner]);
+        let app = flat_app(vec![row_with_runner]);
 
         let backend = TestBackend::new(120, 10);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -702,8 +723,8 @@ mod tests {
         terminal.draw(|f| draw(f, &app)).unwrap();
 
         let buffer = terminal.backend().buffer();
+        // With 2 tiles at 120 wide: each card is 60 wide, starting at (0,1) and (60,1).
         // Interior cell of first (selected) tile: one column in, two rows down from top-left.
-        // Tile grid starts at buffer row 1, card interior starts at row 2.
         let interior_cell = &buffer[(1, 2)];
         assert!(
             interior_cell
@@ -712,16 +733,16 @@ mod tests {
                 .contains(Modifier::REVERSED),
             "selected tile interior should have REVERSED modifier in TILES view"
         );
-        // Blank cell past the title text: the fill must cover the whole card.
-        let blank_cell = &buffer[(TILE_WIDTH - 2, 2)];
+        // Blank cell near the right edge of the first card (59 is the border).
+        let blank_cell = &buffer[(58, 2)];
         assert_eq!(blank_cell.symbol(), " ");
         assert!(
             blank_cell.style().add_modifier.contains(Modifier::REVERSED),
             "fill should cover blank interior cells, not just text"
         );
 
-        // Neighbor tile (next column) should not have REVERSED.
-        let neighbor_cell = &buffer[(TILE_WIDTH + 1, 2)];
+        // Neighbor tile (second card starts at x=60) should not have REVERSED.
+        let neighbor_cell = &buffer[(61, 2)];
         assert!(
             !neighbor_cell
                 .style()
@@ -732,44 +753,6 @@ mod tests {
         assert!(
             neighbor_cell.style().bg.is_none() || neighbor_cell.style().bg == Some(Color::Reset),
             "unselected tile interior should have no bg set"
-        );
-    }
-
-    #[test]
-    fn drilled_view_dims_selected_tile_with_darkgray() {
-        let rows = vec![
-            row_with(1, "a1", "projx", "merged", "-"),
-            row_with(2, "b1", "projy", "merged", "-"),
-        ];
-        let mut app = App::new(rows);
-        app.handle_key(Key::Enter); // Enter drilled view
-
-        let backend = TestBackend::new(120, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| draw(f, &app)).unwrap();
-
-        let buffer = terminal.backend().buffer();
-        // Interior cell of selected tile in drilled view.
-        let interior_cell = &buffer[(1, 2)];
-        assert_eq!(
-            interior_cell.style().bg,
-            Some(Color::DarkGray),
-            "selected tile interior should have DarkGray bg in DRILLED view"
-        );
-        assert!(
-            !interior_cell
-                .style()
-                .add_modifier
-                .contains(Modifier::REVERSED),
-            "selected tile should not have REVERSED in DRILLED view"
-        );
-
-        // Neighbor tile should not have DarkGray bg.
-        let neighbor_cell = &buffer[(TILE_WIDTH + 1, 2)];
-        assert_ne!(
-            neighbor_cell.style().bg,
-            Some(Color::DarkGray),
-            "unselected tile should not have DarkGray bg"
         );
     }
 
@@ -841,7 +824,151 @@ mod tests {
             .contains("Kill 'sess-aaa-1' + worktree? [live run] session is running a live task"));
         assert!(
             text.contains("projx"),
-            "tile grid should stay visible:\n{text}"
+            "breadcrumb should name the project:\n{text}"
+        );
+    }
+
+    #[test]
+    fn tile_grid_dims_unit_test() {
+        let area = Rect::new(0, 0, 80, 22);
+        assert_eq!(tile_grid_dims(2, area), (2, 1));
+        assert_eq!(tile_grid_dims(5, area), (2, 3));
+        assert_eq!(tile_grid_dims(12, area), (2, 4));
+        assert_eq!(tile_grid_dims(1, area), (1, 1));
+        assert_eq!(tile_grid_dims(0, area), (1, 0));
+    }
+
+    #[test]
+    fn tile_grid_fills_area_for_2_5_and_12_tiles() {
+        for num_tiles in [2, 5, 12] {
+            let mut rows = Vec::new();
+            for i in 0..num_tiles {
+                rows.push(row_with(
+                    i + 1,
+                    &format!("sess-{i}"),
+                    &format!("p{i}"),
+                    "merged",
+                    "-",
+                ));
+            }
+            let app = App::new(rows);
+
+            let backend = TestBackend::new(80, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| draw(f, &app)).unwrap();
+
+            let text = buffer_text(&terminal);
+            let (cols, visible_rows) = tile_grid_dims(num_tiles, Rect::new(0, 1, 80, 22));
+            let max_visible = cols * visible_rows;
+
+            let check_count = num_tiles.min(max_visible);
+            for i in 0..check_count {
+                assert!(
+                    text.contains(&format!("p{i}")),
+                    "project p{i} not found for {num_tiles} tiles (expected {check_count} visible)"
+                );
+            }
+
+            let buffer = terminal.backend().buffer();
+            let mut found_top_right = false;
+            let mut found_bottom_right = false;
+
+            // Check for top-right corner at x=79 (right edge)
+            for y in 1..=22 {
+                if buffer[(79, y as u16)].symbol() == "┐" {
+                    found_top_right = true;
+                    break;
+                }
+            }
+
+            // Check for bottom-right corner at y=22 (bottom edge)
+            for x in 0..80 {
+                if buffer[(x as u16, 22)].symbol() == "┘" {
+                    found_bottom_right = true;
+                    break;
+                }
+            }
+
+            assert!(
+                found_top_right,
+                "no ┐ at right edge (x=79) for {num_tiles} tiles"
+            );
+            assert!(
+                found_bottom_right,
+                "no ┘ at bottom edge (y=22) for {num_tiles} tiles"
+            );
+        }
+    }
+
+    #[test]
+    fn tiles_view_renders_no_session_header() {
+        let rows = vec![
+            row_with(1, "a1", "projx", "merged", "-"),
+            row_with(2, "b1", "projy", "merged", "-"),
+        ];
+        let app = App::new(rows);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            !text.contains("SESSION"),
+            "SESSION header should not appear in Tiles view"
+        );
+        assert!(
+            !text.contains("STATUS"),
+            "STATUS header should not appear in Tiles view"
+        );
+    }
+
+    #[test]
+    fn drilled_view_replaces_grid_with_breadcrumb_list() {
+        let rows = vec![
+            row_with(1, "sess-aaa-1", "projx", "merged", "-"),
+            row_with(2, "sess-bbb-1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Enter); // Enter drilled view
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("tiles › projx"),
+            "breadcrumb should show drilled project: {text}"
+        );
+        assert!(
+            text.contains("SESSION"),
+            "SESSION header should appear in drilled view"
+        );
+        assert!(
+            text.contains("sess-aaa-1"),
+            "drilled project's session should appear"
+        );
+        assert!(
+            !text.contains("sess-bbb-1"),
+            "other project's session should not appear"
+        );
+        assert!(
+            !text.contains("projy"),
+            "tile grid should be hidden in drilled view"
+        );
+
+        // Press 'h' to go back to Tiles view
+        app.handle_key(Key::Char('h'));
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("projy"),
+            "back in Tiles view, should see other projects"
+        );
+        assert!(
+            !text.contains("SESSION"),
+            "SESSION header should not appear after returning to Tiles view"
         );
     }
 
@@ -875,7 +1002,7 @@ mod tests {
     fn merged_fg(row: SessionRow) -> Option<Color> {
         let name = row.display_name.clone();
         let mut terminal = Terminal::new(TestBackend::new(120, 10)).unwrap();
-        terminal.draw(|f| draw(f, &App::new(vec![row]))).unwrap();
+        terminal.draw(|f| draw(f, &flat_app(vec![row]))).unwrap();
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height).find_map(|y| {
             let line: String = (0..buffer.area.width)

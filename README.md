@@ -97,11 +97,15 @@ separator, or `-` when none set), and a ready count from `@picker_tile_cmd`
 (shown as `<value> ready`, or `- ready` if unset or unavailable). pckr
 itself never calls `tm`; the tiled view works fully without `tm` on `PATH`.
 
-The layout is master-detail: the tile grid stays on top, and the selected
-tile's sessions are listed below once you drill in (`enter` or `j` from
-TILES focus). The selected tile is filled in reverse video while TILES
-focus is active, and keeps a dimmer dark-gray fill while focus is in its
-session list. The filter (`i`, INSERT mode) applies to the flat view only.
+The tile grid stretches to fill the entire popup, with the column count
+determined by popup width and a floor of about 28 columns by 4 lines per
+tile so project titles, session counts, and flags stay legible. When tiles
+exceed the available height, the grid scrolls by complete rows. Drilling
+in (`enter` or `j` from TILES focus) hides the grid and replaces it with the
+selected project's session list under a breadcrumb `tiles › <project>`;
+pressing `h` or `esc` returns to the full tile grid. The selected tile is
+filled in reverse video. The filter (`i`, INSERT mode) applies to the flat
+view only.
 
 ## Plugin contract
 
