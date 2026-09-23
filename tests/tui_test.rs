@@ -275,6 +275,32 @@ fn pckr_argv_with_exit_marker(socket: &str, marker_path: &Path) -> [String; 3] {
     ]
 }
 
+/// Finds the column offset of `header_word` in `header_line`, then extracts the
+/// substring starting at that offset from `data_line`, verifying it begins with
+/// `expected_value`. Panics with context if not found.
+fn assert_column_value(
+    header_line: &str,
+    header_word: &str,
+    data_line: &str,
+    expected_value: &str,
+) {
+    let offset = header_line.find(header_word).unwrap_or_else(|| {
+        panic!(
+            "header word '{}' not found in: {}",
+            header_word, header_line
+        )
+    });
+    let data_at_column = data_line.chars().skip(offset).collect::<String>();
+    assert!(
+        data_at_column.starts_with(expected_value),
+        "at column offset {} (header '{}'): expected '{}' but got '{}'",
+        offset,
+        header_word,
+        expected_value,
+        data_at_column.split_whitespace().next().unwrap_or("")
+    );
+}
+
 // --- (a) list rendering ------------------------------------------------
 
 #[test]
@@ -412,6 +438,84 @@ fn runner_column_renders_picker_runner() {
         text.contains("claude") && text.contains("opencode"),
         "runner tokens must render in drilled view:\n{text}"
     );
+
+    server.send_key("pckr-host", "q");
+}
+
+#[test]
+fn phase_column_renders_picker_phase_in_flat_and_drilled_views() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("phase");
+
+    let dir_a = fresh_dir("phase-a");
+    let dir_b = fresh_dir("phase-b");
+    let dir_host = fresh_dir("phase-host");
+
+    server.new_session("session-a", &dir_a, &["sh"]);
+    server.new_session("session-b", &dir_b, &["sh"]);
+    server.set_option("session-a", "@picker_phase", "started");
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("session-b"),
+    );
+
+    let lines: Vec<&str> = text.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.contains("PHASE"))
+        .expect("PHASE header must be present");
+
+    // Check phase column values in flat view
+    let a_line = lines
+        .iter()
+        .find(|l| l.contains("session-a"))
+        .expect("session-a must be present");
+    assert_column_value(header, "PHASE", a_line, "started");
+
+    let b_line = lines
+        .iter()
+        .find(|l| l.contains("session-b"))
+        .expect("session-b must be present");
+    assert_column_value(header, "PHASE", b_line, "-");
+
+    // Drill into tiled view and check drilled list
+    server.send_literal("pckr-host", "t");
+    let _ = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("TILES"),
+    );
+
+    server.send_key("pckr-host", "Enter");
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("SESSIONS") && t.contains("session-a"),
+    );
+
+    let lines: Vec<&str> = text.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.contains("PHASE"))
+        .expect("PHASE header must be in drilled list");
+
+    let a_line = lines
+        .iter()
+        .find(|l| l.contains("session-a"))
+        .expect("session-a must be in drilled list");
+    assert_column_value(header, "PHASE", a_line, "started");
+
+    let b_line = lines
+        .iter()
+        .find(|l| l.contains("session-b"))
+        .expect("session-b must be in drilled list");
+    assert_column_value(header, "PHASE", b_line, "-");
 
     server.send_key("pckr-host", "q");
 }

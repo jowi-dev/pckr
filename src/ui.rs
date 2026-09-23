@@ -414,7 +414,7 @@ fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(data_lines).scroll((scroll, 0)), data_area);
 }
 
-fn header_line(widths: &[usize; 9]) -> Line<'static> {
+fn header_line(widths: &[usize; 10]) -> Line<'static> {
     let cells = [
         render::justify_right(render::HEADERS[0], widths[0]),
         render::justify_left(render::HEADERS[1], widths[1]),
@@ -425,11 +425,16 @@ fn header_line(widths: &[usize; 9]) -> Line<'static> {
         render::justify_left(render::HEADERS[6], widths[6]),
         render::justify_left(render::HEADERS[7], widths[7]),
         render::justify_left(render::HEADERS[8], widths[8]),
+        render::justify_left(render::HEADERS[9], widths[9]),
     ];
     Line::from(cells.join("  "))
 }
 
-fn data_line(row: &crate::model::SessionRow, widths: &[usize; 9], selected: bool) -> Line<'static> {
+fn data_line(
+    row: &crate::model::SessionRow,
+    widths: &[usize; 10],
+    selected: bool,
+) -> Line<'static> {
     let base_style = if selected {
         Style::default().add_modifier(Modifier::REVERSED)
     } else {
@@ -441,14 +446,16 @@ fn data_line(row: &crate::model::SessionRow, widths: &[usize; 9], selected: bool
     let session_cell = render::justify_left(&row.display_name, widths[2]);
     let attn_cell = render::justify_left(&row.attn, widths[3]);
     let runner_cell = render::justify_left(&row.runner, widths[4]);
-    let wt_cell = render::justify_left(&row.wt, widths[5]);
-    let project_cell = render::justify_left(&row.project, widths[6]);
-    let branch_cell = render::justify_left(&row.branch, widths[7]);
-    let status_cell = render::justify_left(&row.status, widths[8]);
+    let phase_cell = render::justify_left(&row.phase, widths[5]);
+    let wt_cell = render::justify_left(&row.wt, widths[6]);
+    let project_cell = render::justify_left(&row.project, widths[7]);
+    let branch_cell = render::justify_left(&row.branch, widths[8]);
+    let status_cell = render::justify_left(&row.status, widths[9]);
 
     let branch_style = base_style.patch(Style::default().add_modifier(Modifier::DIM));
     let status_color = match row.status.as_str() {
-        "merged" => Some(Color::Green),
+        "merged" if row.phase == "-" => Some(Color::Green),
+        "merged" => None,
         "unmerged" | "detached" => Some(Color::Yellow),
         _ => None,
     };
@@ -467,6 +474,8 @@ fn data_line(row: &crate::model::SessionRow, widths: &[usize; 9], selected: bool
         Span::styled(attn_cell, base_style),
         Span::raw("  "),
         Span::styled(runner_cell, base_style),
+        Span::raw("  "),
+        Span::styled(phase_cell, base_style),
         Span::raw("  "),
         Span::styled(wt_cell, base_style),
         Span::raw("  "),
@@ -494,6 +503,7 @@ mod tests {
             display_name: name.to_string(),
             attn: "-".to_string(),
             runner: "-".to_string(),
+            phase: "-".to_string(),
             wt: "-".to_string(),
             project: "proj".to_string(),
             branch: "main".to_string(),
@@ -509,6 +519,7 @@ mod tests {
             display_name: name.to_string(),
             attn: attn.to_string(),
             runner: "-".to_string(),
+            phase: "-".to_string(),
             wt: "-".to_string(),
             project: project.to_string(),
             branch: "main".to_string(),
@@ -854,5 +865,33 @@ mod tests {
             text.contains("- ready"),
             "projy tile should show '- ready':\n{text}"
         );
+    }
+
+    /// Foreground color of the STATUS cell on the frame line showing `name`.
+    fn merged_fg(row: SessionRow) -> Option<Color> {
+        let name = row.display_name.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 10)).unwrap();
+        terminal.draw(|f| draw(f, &App::new(vec![row]))).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).find_map(|y| {
+            let line: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if !line.contains(&name) {
+                return None;
+            }
+            let x = line.find("merged")?;
+            buffer[(x as u16, y)].fg.into()
+        })
+    }
+
+    #[test]
+    fn merged_status_is_green_only_without_phase() {
+        let unphased = row(1, "s1", "merged");
+        let mut phased = row(1, "s1", "merged");
+        phased.phase = "started".to_string();
+
+        assert_eq!(merged_fg(unphased), Some(Color::Green));
+        assert_ne!(merged_fg(phased), Some(Color::Green));
     }
 }
