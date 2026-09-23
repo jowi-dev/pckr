@@ -432,10 +432,17 @@ fn draw_tile_card(
     let selected = tile_idx == app.tile_selected();
     let card_style = tile_card_style(selected);
 
-    let title_line = Line::from(Span::styled(
+    let mut title_spans = vec![Span::styled(
         tile.project.clone(),
         Style::default().add_modifier(Modifier::BOLD),
-    ));
+    )];
+    if tile.blocked_count > 0 {
+        title_spans.push(Span::styled(
+            format!("  [{} blocked]", tile.blocked_count),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let title_line = Line::from(title_spans);
     let rollup_line = Line::from(format!(
         "{} sess  {} unmerged  {} active  {}",
         tile.session_count, tile.unmerged_count, tile.active_count, tile.attn
@@ -546,6 +553,12 @@ fn data_line(
         None => base_style,
     };
 
+    let phase_style = if row.phase == "blocked" {
+        base_style.patch(Style::default().fg(Color::Red))
+    } else {
+        base_style
+    };
+
     let mut spans = vec![
         Span::styled(idx_cell, base_style),
         Span::raw("  "),
@@ -559,7 +572,7 @@ fn data_line(
         Span::raw("  "),
         Span::styled(runner_cell, base_style),
         Span::raw("  "),
-        Span::styled(phase_cell, base_style),
+        Span::styled(phase_cell, phase_style),
         Span::raw("  "),
         Span::styled(wt_cell, base_style),
         Span::raw("  "),
@@ -1156,6 +1169,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tiles_view_marks_blocked_projects() {
+        let mut a1 = row_with(1, "a1", "projx", "-", "-");
+        a1.phase = "blocked".to_string();
+        let a2 = row_with(2, "a2", "projx", "-", "-");
+        let b1 = row_with(3, "b1", "projy", "-", "-");
+
+        let app = App::new(vec![a1, a2, b1]);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("[1 blocked]"),
+            "projx tile should show '[1 blocked]':\n{text}"
+        );
+        assert_eq!(
+            text.matches("blocked").count(),
+            1,
+            "only the projx tile should carry a blocked marker:\n{text}"
+        );
+    }
+
     /// Foreground color of the STATUS cell on the frame line showing `name`.
     fn merged_fg(row: SessionRow) -> Option<Color> {
         let name = row.display_name.clone();
@@ -1170,6 +1208,29 @@ mod tests {
                 return None;
             }
             let x = line.find("merged")?;
+            buffer[(x as u16, y)].fg.into()
+        })
+    }
+
+    /// Foreground color of the PHASE cell on the frame line showing `name`.
+    fn phase_fg(row: SessionRow) -> Option<Color> {
+        let name = row.display_name.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 10)).unwrap();
+        terminal.draw(|f| draw(f, &flat_app(vec![row]))).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).find_map(|y| {
+            let line: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if !line.contains(&name) {
+                return None;
+            }
+            let phase_word = if line.contains("blocked") {
+                "blocked"
+            } else {
+                "started"
+            };
+            let x = line.find(phase_word)?;
             buffer[(x as u16, y)].fg.into()
         })
     }
@@ -1402,5 +1463,17 @@ mod tests {
             Some(Color::Red),
             "fresh age should not be red"
         );
+    }
+
+    #[test]
+    fn blocked_phase_cell_is_red() {
+        let mut blocked_row = row_with(1, "s1", "p1", "-", "-");
+        blocked_row.phase = "blocked".to_string();
+
+        let mut started_row = row_with(1, "s1", "p1", "-", "-");
+        started_row.phase = "started".to_string();
+
+        assert_eq!(phase_fg(blocked_row), Some(Color::Red));
+        assert_ne!(phase_fg(started_row), Some(Color::Red));
     }
 }

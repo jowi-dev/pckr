@@ -92,7 +92,8 @@ Pressing `t` switches to the flat session list; `t` again returns to tiles.
 Sessions are grouped into one tile per project, using the same PROJECT value
 shown in the flat list (resolved locally from git). Each tile shows a
 roll-up: session count, unmerged-branch count, an active count (the number
-of the project's sessions whose `@picker_phase` is `working`), the
+of the project's sessions whose `@picker_phase` is `working`), a blocked
+count (shown as a red `[N blocked]` marker if any sessions are blocked), the
 aggregated `@picker_status`/`@picker_server` attention flags (concatenated
 with no separator, or `-` when none set), and two lines from
 `@picker_tile_cmd`: a ready count (`<value> ready`, or `- ready` if unset or
@@ -183,15 +184,17 @@ the drilled session list (`-` when unset; `pckr list --plain` omits it). Writers
 | `started` | Agent run just began; branch may have no commits yet |
 | `working` | Run is actively producing commits |
 | `review` | Work is in review (e.g. PR is open) |
+| `blocked` | Run stopped because its ticket has an open blocker (e.g. `tm ready` reported blocked); rendered in red |
 | *(unset)* | No lifecycle signal; normal status coloring applies |
 
 pckr only renders the value; it never validates or writes `@picker_phase`.
-The one thing it does with it: a `merged` STATUS is not painted green
+Beyond rendering it: a `merged` STATUS is not painted green
 (safe to close) while any phase is set, because a freshly started branch
-with no commits is an ancestor of its base and reads as `merged`. The
-tiled view also counts each project's `working` sessions as its active
-count; pckr never ages out a `working` phase, so clearing it is the
-writer's job (for example `tm runs reap` or a hook).
+with no commits is an ancestor of its base and reads as `merged`. The PHASE
+cell renders red when `blocked`. The tiled view counts each project's
+`working` sessions as its active count and marks projects with `blocked`
+sessions with a `[N blocked]` count; pckr never ages out any phase, so
+clearing it is the writer's job (for example `tm runs reap` or a hook).
 
 pckr also reads the global `@picker_usage` option at every list build, after
 `@picker_refresh_cmd` runs, and renders it as-is on its own line under the

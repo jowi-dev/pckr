@@ -797,6 +797,79 @@ fn age_column_renders_minutes_since_picker_last_active() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn blocked_phase_shows_in_row_and_marks_the_tile() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("phase-blocked");
+
+    // Both sessions live in the same git repo so they land in one project
+    // tile, matching how tiled_view_drill_in_and_switch groups sessions.
+    let repo = fresh_dir("phase-blocked-repo").join("proj-bbb");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("f.txt"), "b\n").unwrap();
+    git(&repo, &["add", "f.txt"]);
+    git_commit(&repo, "initial");
+
+    let dir_host = fresh_dir("phase-blocked-host");
+
+    server.new_session("sess-b1", &repo, &["sh"]);
+    server.new_session("sess-b2", &repo, &["sh"]);
+    server.set_option("sess-b1", "@picker_phase", "blocked");
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+    enter_flat_view(&server, "pckr-host");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("sess-b1") && t.contains("sess-b2"),
+    );
+
+    let lines: Vec<&str> = text.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.contains("PHASE"))
+        .expect("PHASE header must be present");
+
+    let b1_line = lines
+        .iter()
+        .find(|l| l.contains("sess-b1"))
+        .expect("sess-b1 must be present");
+    assert_column_value(header, "PHASE", b1_line, "blocked");
+
+    let b2_line = lines
+        .iter()
+        .find(|l| l.contains("sess-b2"))
+        .expect("sess-b2 must be present");
+    assert_column_value(header, "PHASE", b2_line, "-");
+
+    // Switch to the tiled view and check the tile shows [1 blocked] marker.
+    server.send_literal("pckr-host", "t");
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("TILES —") && t.contains("[1 blocked]"),
+    );
+
+    // Assert [1 blocked] appears exactly once
+    assert_eq!(
+        text.matches("blocked").count(),
+        1,
+        "tile must show [1 blocked] exactly once:\n{text}"
+    );
+
+    // Assert no active sessions (blocked is not active) and two sessions total
+    assert!(
+        text.contains("2 sess") && text.contains("0 active"),
+        "tile roll-up must show 2 sessions and 0 active:\n{text}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
 // --- (c) modal safety -----------------------------------------------------
 
 #[test]
