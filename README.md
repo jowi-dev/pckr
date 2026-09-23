@@ -137,6 +137,24 @@ lane launcher sets it with `tmux set-option -t <session> @picker_runner
 claude`. It is render-only: there is no allowlist of runner names and pckr
 never acts on the value.
 
+`@picker_phase` is an additive per-session option that pckr renders
+verbatim in a PHASE column after RUNNER, in `pckr list`, the flat view, and
+the drilled session list (`-` when unset; `pckr list --plain` omits it). Writers such as `tm runs` and devtools hooks set it with
+`tmux set-option -t <session> @picker_phase <token>` or unset with
+`tmux set-option -u -t <session> @picker_phase`. Token vocabulary:
+
+| Token | Meaning |
+|---|---|
+| `started` | Agent run just began; branch may have no commits yet |
+| `working` | Run is actively producing commits |
+| `review` | Work is in review (e.g. PR is open) |
+| *(unset)* | No lifecycle signal; normal status coloring applies |
+
+pckr only renders the value; it never validates or writes `@picker_phase`.
+The one thing it does with it: a `merged` STATUS is not painted green
+(safe to close) while any phase is set, because a freshly started branch
+with no commits is an ancestor of its base and reads as `merged`.
+
 ## Kill confirmation
 
 Pressing `x` shells out to `tm runs kill-safety <session>` (from

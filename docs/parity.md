@@ -27,9 +27,9 @@ by falling through to the interactive UI; do not reproduce that bug).
 
 ## Session list
 
-Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}'`.
+Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}'`.
 
-Row fields (TSV order for `--plain`, one row per session):
+Row fields (the 10-field TSV output for `--plain`, one row per session):
 1. `name` — machine key, never displayed.
 2. `idx` — 1-based row number.
 3. `marker` — `*` if this is the current session (`display-message -p '#S'`), else `-`.
@@ -42,11 +42,16 @@ Row fields (TSV order for `--plain`, one row per session):
 9. `status` — `merged` / `unmerged` / `detached` / `-`.
 10. `runner` — `@picker_runner` value verbatim; `-` if empty (appended last so existing positional consumers are unaffected).
 
-Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `RUNNER`, `WT`,
+The table (and the TUI) additionally shows a display-only PHASE column right
+after RUNNER: the `@picker_phase` value verbatim, `-` when empty. `--plain`
+omits it. This is a deliberate divergence from the bash picker (GH-11).
+
+Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `RUNNER`, `PHASE`, `WT`,
 `PROJECT`, `BRANCH`, `STATUS`; columns padded to max plain-text width
 (`#` right-justified, rest left), two spaces between columns. Colors:
-`status` green when `merged`, yellow when `unmerged`/`detached`; `branch`
-always dim; nothing else colored.
+`status` green when `merged` and no phase is set; `merged` with a phase
+set is uncolored; yellow when `unmerged`/`detached`; `branch` always dim;
+nothing else colored.
 
 ### Refresh hook (plugin trigger contract — NEW, replaces hardcoded phoenix call)
 
@@ -182,3 +187,5 @@ classification and ConfirmKill flow described above.
 - Ready-ticket logic (which issues count as ready to pick up, e.g. via
   `tm ready`) stays in the writer script behind `@picker_tile_cmd`; pckr
   only runs the command and renders its first stdout line.
+- `@picker_phase` writers (tm runs / devtools hooks) live outside pckr; pckr
+  only renders the value verbatim.
