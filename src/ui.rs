@@ -32,10 +32,10 @@ const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 
 /// Minimum tile card dimensions: width in columns, height in lines
-/// (2 border + 3 content lines: title, counts, ready — the floor that keeps
-/// each line legible).
+/// (2 border + 4 content lines: title, counts, ready, spend — the floor that
+/// keeps each line legible).
 const MIN_TILE_WIDTH: u16 = 34;
-const MIN_TILE_HEIGHT: u16 = 5;
+const MIN_TILE_HEIGHT: u16 = 6;
 
 /// Restores the terminal to its pre-TUI state (raw mode off, alternate
 /// screen left). Best-effort: called on every exit path, including from the
@@ -428,9 +428,11 @@ fn draw_tile_card(
         tile.session_count, tile.unmerged_count, tile.active_count, tile.attn
     ));
     let ready_line = Line::from(format!("{} ready", tile.ready));
+    let spend_line = Line::from(format!("{} spend", tile.spend));
 
     let block = Block::default().borders(Borders::ALL).style(card_style);
-    let paragraph = Paragraph::new(vec![title_line, rollup_line, ready_line]).block(block);
+    let paragraph =
+        Paragraph::new(vec![title_line, rollup_line, ready_line, spend_line]).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -865,7 +867,7 @@ mod tests {
 
     #[test]
     fn tile_grid_dims_unit_test() {
-        let area = Rect::new(0, 0, 80, 22);
+        let area = Rect::new(0, 0, 80, 24);
         assert_eq!(tile_grid_dims(2, area), (2, 1));
         assert_eq!(tile_grid_dims(5, area), (2, 3));
         assert_eq!(tile_grid_dims(12, area), (2, 4));
@@ -1015,7 +1017,13 @@ mod tests {
         ];
         let mut app = App::new(rows);
         let mut info = std::collections::HashMap::new();
-        info.insert("projx".to_string(), "3".to_string());
+        info.insert(
+            "projx".to_string(),
+            crate::model::TileFields {
+                ready: Some("3".to_string()),
+                spend: Some("$4.20/24h".to_string()),
+            },
+        );
         app.set_tile_info(info);
 
         let backend = TestBackend::new(120, 20);
@@ -1030,6 +1038,14 @@ mod tests {
         assert!(
             text.contains("- ready"),
             "projy tile should show '- ready':\n{text}"
+        );
+        assert!(
+            text.contains("$4.20/24h spend"),
+            "projx tile should show '$4.20/24h spend':\n{text}"
+        );
+        assert!(
+            text.contains("- spend"),
+            "projy tile should show '- spend':\n{text}"
         );
     }
 

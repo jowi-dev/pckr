@@ -1496,6 +1496,44 @@ fn launch_renders_tiles_and_t_toggles_flat() {
     server.send_key("zz-pckr-host", "q");
 }
 
+#[test]
+fn tiled_view_shows_ready_and_spend_fields_from_tile_cmd() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    // Named directly as the command, the script sees no positional args, so
+    // it reads the project from the environment.
+    let stub_dir = stub_tm_dir(
+        "tile-cmd-stub-spend",
+        r#"[ "$PICKER_PROJECT" = proj-aaa ] && printf '%s\n' 'ready=3' 'spend=$4.20/24h'"#,
+    );
+    let stub = stub_dir.join("tm");
+    let (_server, text) =
+        launch_tiled_with_tile_cmd("tiled-ready-spend", Some(stub.to_str().unwrap()));
+
+    assert!(
+        text.contains("3 ready"),
+        "tile must show the stub's ready count:\n{text}"
+    );
+    assert!(
+        text.contains("$4.20/24h spend"),
+        "tile must show the stub's spend field:\n{text}"
+    );
+}
+
+#[test]
+fn tiled_view_shows_spend_placeholder_without_spend_field() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (_server, text) = launch_tiled_with_tile_cmd("tiled-no-spend", Some("echo ready=3"));
+
+    assert!(
+        text.contains("3 ready"),
+        "tile must show the stub's ready count:\n{text}"
+    );
+    assert!(
+        text.contains("- spend"),
+        "tile must show '- spend' when the tile command omits the spend field:\n{text}"
+    );
+}
+
 // --- (f) jump-root as CLI ---------------------------------------------------
 
 #[test]
