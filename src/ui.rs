@@ -553,6 +553,12 @@ fn data_line(
         None => base_style,
     };
 
+    let phase_style = if row.phase == "blocked" {
+        base_style.patch(Style::default().fg(Color::Red))
+    } else {
+        base_style
+    };
+
     let mut spans = vec![
         Span::styled(idx_cell, base_style),
         Span::raw("  "),
@@ -566,7 +572,7 @@ fn data_line(
         Span::raw("  "),
         Span::styled(runner_cell, base_style),
         Span::raw("  "),
-        Span::styled(phase_cell, base_style),
+        Span::styled(phase_cell, phase_style),
         Span::raw("  "),
         Span::styled(wt_cell, base_style),
         Span::raw("  "),
@@ -1206,6 +1212,29 @@ mod tests {
         })
     }
 
+    /// Foreground color of the PHASE cell on the frame line showing `name`.
+    fn phase_fg(row: SessionRow) -> Option<Color> {
+        let name = row.display_name.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 10)).unwrap();
+        terminal.draw(|f| draw(f, &flat_app(vec![row]))).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).find_map(|y| {
+            let line: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if !line.contains(&name) {
+                return None;
+            }
+            let phase_word = if line.contains("blocked") {
+                "blocked"
+            } else {
+                "started"
+            };
+            let x = line.find(phase_word)?;
+            buffer[(x as u16, y)].fg.into()
+        })
+    }
+
     #[test]
     fn merged_status_is_green_only_without_phase() {
         let unphased = row(1, "s1", "merged");
@@ -1434,5 +1463,17 @@ mod tests {
             Some(Color::Red),
             "fresh age should not be red"
         );
+    }
+
+    #[test]
+    fn blocked_phase_cell_is_red() {
+        let mut blocked_row = row_with(1, "s1", "p1", "-", "-");
+        blocked_row.phase = "blocked".to_string();
+
+        let mut started_row = row_with(1, "s1", "p1", "-", "-");
+        started_row.phase = "started".to_string();
+
+        assert_eq!(phase_fg(blocked_row), Some(Color::Red));
+        assert_ne!(phase_fg(started_row), Some(Color::Red));
     }
 }

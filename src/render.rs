@@ -5,8 +5,8 @@ use crate::model::{self, SessionRow};
 const RESET: &str = "\x1b[0m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
-const DIM: &str = "\x1b[2m";
 const RED: &str = "\x1b[31m";
+const DIM: &str = "\x1b[2m";
 
 pub(crate) const HEADERS: [&str; 12] = [
     "#", " ", "SESSION", "ATTN", "AGE", "RUNNER", "PHASE", "WT", "PROJECT", "BRANCH", "STATUS",
@@ -87,8 +87,8 @@ pub(crate) fn justify_right(text: &str, width: usize) -> String {
 /// Padded, ANSI-colored table: header row first, `#` right-justified, all other columns
 /// left-justified, two-space column separators. `status` is green for `merged` only when
 /// no phase is set (a phased `merged` is uncolored), yellow for `unmerged`/`detached`;
-/// `branch` is always dim; `age` is red when stale. Padding spaces are appended outside
-/// color codes so trailing whitespace stays plain.
+/// `phase` is red when `blocked`; `branch` is always dim; `age` is red when stale. Padding
+/// spaces are appended outside color codes so trailing whitespace stays plain.
 pub fn to_table(rows: &[SessionRow], now: u64) -> String {
     let widths = compute_column_widths(rows, now);
 
@@ -125,7 +125,12 @@ pub fn to_table(rows: &[SessionRow], now: u64) -> String {
         };
 
         let runner_cell = justify_left(&r.runner, widths[5]);
-        let phase_cell = justify_left(&r.phase, widths[6]);
+        let phase_cell = if r.phase == "blocked" {
+            let pad = widths[6].saturating_sub(r.phase.chars().count());
+            format!("{RED}{}{RESET}{}", r.phase, " ".repeat(pad))
+        } else {
+            justify_left(&r.phase, widths[6])
+        };
         let wt_cell = justify_left(&r.wt, widths[7]);
         let project_cell = justify_left(&r.project, widths[8]);
 
@@ -266,6 +271,27 @@ mod tests {
         let out = to_table(&rows, 1000);
         let line = out.lines().nth(1).unwrap();
         assert!(line.contains("started"), "phase value must render: {line}");
+    }
+
+    #[test]
+    fn blocked_phase_renders_red() {
+        // Blocked phase should be wrapped in RED color codes
+        let rows = vec![row(1, '-', "sess", "-", "-", "blocked", "-", "p", "b", "-")];
+        let out = to_table(&rows, 1000);
+        let line = out.lines().nth(1).unwrap();
+        assert!(
+            line.contains(&format!("{RED}blocked{RESET}")),
+            "blocked phase must be red: {line}"
+        );
+
+        // Started phase should NOT be wrapped in RED
+        let rows2 = vec![row(1, '-', "sess", "-", "-", "started", "-", "p", "b", "-")];
+        let out2 = to_table(&rows2, 1000);
+        let line2 = out2.lines().nth(1).unwrap();
+        assert!(
+            !line2.contains(&format!("{RED}started{RESET}")),
+            "started phase must not be red: {line2}"
+        );
     }
 
     #[test]
