@@ -547,6 +547,71 @@ fn phase_column_renders_picker_phase_in_flat_and_drilled_views() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn working_phase_shows_in_row_and_rolls_up_to_tile_active_count() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("phase-active");
+
+    // Both sessions live in the same git repo so they land in one project
+    // tile, matching how tiled_view_drill_in_and_switch groups sessions.
+    let repo = fresh_dir("phase-active-repo").join("proj-aaa");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("f.txt"), "a\n").unwrap();
+    git(&repo, &["add", "f.txt"]);
+    git_commit(&repo, "initial");
+
+    let dir_host = fresh_dir("phase-active-host");
+
+    server.new_session("sess-a1", &repo, &["sh"]);
+    server.new_session("sess-a2", &repo, &["sh"]);
+    server.set_option("sess-a1", "@picker_phase", "working");
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+    enter_flat_view(&server, "pckr-host");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("sess-a1") && t.contains("sess-a2"),
+    );
+
+    let lines: Vec<&str> = text.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.contains("PHASE"))
+        .expect("PHASE header must be present");
+
+    let a1_line = lines
+        .iter()
+        .find(|l| l.contains("sess-a1"))
+        .expect("sess-a1 must be present");
+    assert_column_value(header, "PHASE", a1_line, "working");
+
+    let a2_line = lines
+        .iter()
+        .find(|l| l.contains("sess-a2"))
+        .expect("sess-a2 must be present");
+    assert_column_value(header, "PHASE", a2_line, "-");
+
+    // Switch to the tiled view and check the roll-up counts the one
+    // `working` session as active.
+    server.send_literal("pckr-host", "t");
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("TILES —") && t.contains("proj-aaa") && t.contains("1 active"),
+    );
+    assert!(
+        text.contains("2 sess") && text.contains("0 unmerged") && text.contains("1 active"),
+        "tile roll-up must show session, unmerged, and active counts:\n{text}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
 // --- (c) modal safety -----------------------------------------------------
 
 #[test]
