@@ -196,8 +196,9 @@ ConfirmKill flow described above. Tiles also roll up an active count from
   (claude-picker-attention.sh); pckr only renders the option value.
 - Phoenix detection stays in phoenix-picker-server.sh; pckr only runs the
   generic `@picker_refresh_cmd`.
-- Ready-ticket logic (which issues count as ready to pick up, e.g. via
-  `tm ready`) stays in the writer script behind `@picker_tile_cmd`; pckr
-  only runs the command and renders its first stdout line.
+- Ready-ticket and spend logic (which issues count as ready to pick up,
+  e.g. via `tm ready`, and spend totals, e.g. via `tm runs`) stays in the
+  writer script behind `@picker_tile_cmd`; pckr only runs the command and
+  renders the recognized fields verbatim.
 - `@picker_phase` writers (tm runs / devtools hooks) live outside pckr; pckr
   only renders the value verbatim.

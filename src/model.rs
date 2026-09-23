@@ -147,17 +147,62 @@ pub fn run_refresh_hook(tmux: &Tmux) {
 /// slow tracker call can never freeze the popup.
 pub const TILE_CMD_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Parses one tile command's result: the first stdout line, trimmed, only
-/// when the command succeeded and that line is non-empty.
-pub fn parse_tile_output(success: bool, stdout: &str) -> Option<String> {
+/// Fields parsed from one `@picker_tile_cmd` run. `None` means the field is
+/// missing (never printed, or printed with an empty value).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TileFields {
+    pub ready: Option<String>,
+    pub spend: Option<String>,
+}
+
+/// Parses one tile command's result under the `key=value` contract: each
+/// stdout line shaped `key=value` sets a field, splitting at the FIRST `=`
+/// with the key and value trimmed; if a key repeats, the last line wins.
+/// Unknown keys, blank lines, and later lines with no `=` are ignored. An
+/// empty value counts as missing. Recognized keys are `ready` and `spend`.
+/// As a legacy form, if the first non-empty line has no `=`, it is used as
+/// the `ready` value. A failed command returns `TileFields::default()`.
+pub fn parse_tile_output(success: bool, stdout: &str) -> TileFields {
     if !success {
-        return None;
+        return TileFields::default();
     }
-    stdout
-        .lines()
-        .next()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
+
+    let mut fields = TileFields::default();
+    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
+
+    let Some(first) = lines.next() else {
+        return fields;
+    };
+
+    match first.split_once('=') {
+        Some((key, value)) => set_tile_field(&mut fields, key, value),
+        None => fields.ready = Some(first.to_string()),
+    }
+
+    for line in lines {
+        if let Some((key, value)) = line.split_once('=') {
+            set_tile_field(&mut fields, key, value);
+        }
+    }
+
+    fields
+}
+
+/// Sets the recognized field named by `key` (trimmed) to `value` (trimmed),
+/// treating an empty trimmed value as missing. Unknown keys are ignored.
+fn set_tile_field(fields: &mut TileFields, key: &str, value: &str) {
+    let key = key.trim();
+    let value = value.trim();
+    let value = if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    };
+    match key {
+        "ready" => fields.ready = value,
+        "spend" => fields.spend = value,
+        _ => {}
+    }
 }
 
 /// Runs `cmd` once per project as `sh -c <cmd> sh <project> <root>` (so the
@@ -165,13 +210,14 @@ pub fn parse_tile_output(success: bool, stdout: &str) -> Option<String> {
 /// as working directory and `PICKER_PROJECT` / `PICKER_ROOT` exported, so a
 /// script named directly as the command still receives both. All commands run concurrently under one shared
 /// `timeout`; any still running at the deadline are killed. Returns project
-/// name -> value (see `parse_tile_output`); failed, empty, or timed-out
-/// projects get no entry.
+/// name -> fields (see `parse_tile_output`); failed, empty, or timed-out
+/// projects get no entry, and a project only gets an entry when at least one
+/// field was parsed.
 pub fn run_tile_cmds(
     cmd: &str,
     projects: &[(String, PathBuf)],
     timeout: Duration,
-) -> HashMap<String, String> {
+) -> HashMap<String, TileFields> {
     let deadline = Instant::now() + timeout;
 
     // Each child's stdout is drained on its own thread so a pipe held open
@@ -224,8 +270,9 @@ pub fn run_tile_cmds(
         let Ok(stdout) = rx.recv_timeout(remaining) else {
             continue;
         };
-        if let Some(value) = parse_tile_output(status.success(), &stdout) {
-            results.insert(project.to_string(), value);
+        let fields = parse_tile_output(status.success(), &stdout);
+        if fields.ready.is_some() || fields.spend.is_some() {
+            results.insert(project.to_string(), fields);
         }
     }
     results
@@ -236,7 +283,7 @@ pub fn run_tile_cmds(
 /// `gitinfo::project_name`, rooted at `gitinfo::main_repo_of`). Returns an
 /// empty map without listing sessions when the option is unset. pckr has no
 /// built-in knowledge of what the command invokes.
-pub fn build_tile_info(tmux: &Tmux) -> HashMap<String, String> {
+pub fn build_tile_info(tmux: &Tmux) -> HashMap<String, TileFields> {
     let Some(cmd) = tmux.show_global_option("@picker_tile_cmd") else {
         return HashMap::new();
     };
@@ -286,32 +333,127 @@ mod tests {
 
     #[test]
     fn parse_tile_output_success_with_content() {
-        assert_eq!(parse_tile_output(true, "3\n"), Some("3".to_string()));
+        assert_eq!(
+            parse_tile_output(true, "3\n"),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            }
+        );
     }
 
     #[test]
     fn parse_tile_output_uses_only_first_line() {
-        assert_eq!(parse_tile_output(true, "3\nextra"), Some("3".to_string()));
+        assert_eq!(
+            parse_tile_output(true, "3\nextra"),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            }
+        );
     }
 
     #[test]
     fn parse_tile_output_trims_whitespace() {
-        assert_eq!(parse_tile_output(true, "  3  \n"), Some("3".to_string()));
+        assert_eq!(
+            parse_tile_output(true, "  3  \n"),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            }
+        );
     }
 
     #[test]
     fn parse_tile_output_empty_returns_none() {
-        assert_eq!(parse_tile_output(true, ""), None);
+        assert_eq!(parse_tile_output(true, ""), TileFields::default());
     }
 
     #[test]
     fn parse_tile_output_whitespace_only_returns_none() {
-        assert_eq!(parse_tile_output(true, "   \n"), None);
+        assert_eq!(parse_tile_output(true, "   \n"), TileFields::default());
     }
 
     #[test]
     fn parse_tile_output_failure_returns_none() {
-        assert_eq!(parse_tile_output(false, "3\n"), None);
+        assert_eq!(parse_tile_output(false, "3\n"), TileFields::default());
+    }
+
+    #[test]
+    fn parse_tile_output_ready_and_spend_key_value_lines() {
+        assert_eq!(
+            parse_tile_output(true, "ready=3\nspend=$4.20/24h"),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: Some("$4.20/24h".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tile_output_unknown_keys_ignored() {
+        assert_eq!(
+            parse_tile_output(true, "ready=3\nbogus=zzz"),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tile_output_last_duplicate_key_wins() {
+        assert_eq!(
+            parse_tile_output(true, "ready=3\nready=7"),
+            TileFields {
+                ready: Some("7".to_string()),
+                spend: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tile_output_value_may_contain_equals() {
+        assert_eq!(
+            parse_tile_output(true, "spend=a=b"),
+            TileFields {
+                ready: None,
+                spend: Some("a=b".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tile_output_empty_value_is_missing() {
+        assert_eq!(
+            parse_tile_output(true, "ready=3\nspend="),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tile_output_later_line_without_equals_ignored() {
+        assert_eq!(
+            parse_tile_output(true, "ready=3\njunk"),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tile_output_trims_key_and_value() {
+        assert_eq!(
+            parse_tile_output(true, " spend = 12k tok "),
+            TileFields {
+                ready: None,
+                spend: Some("12k tok".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -319,7 +461,13 @@ mod tests {
         let root = std::env::temp_dir();
         let projects = vec![("proj1".to_string(), root.clone())];
         let results = run_tile_cmds("echo 3", &projects, Duration::from_secs(5));
-        assert_eq!(results.get("proj1"), Some(&"3".to_string()));
+        assert_eq!(
+            results.get("proj1"),
+            Some(&TileFields {
+                ready: Some("3".to_string()),
+                spend: None,
+            })
+        );
     }
 
     #[test]
@@ -327,7 +475,13 @@ mod tests {
         let root = std::env::temp_dir();
         let projects = vec![("myproject".to_string(), root.clone())];
         let results = run_tile_cmds("echo $1", &projects, Duration::from_secs(5));
-        assert_eq!(results.get("myproject"), Some(&"myproject".to_string()));
+        assert_eq!(
+            results.get("myproject"),
+            Some(&TileFields {
+                ready: Some("myproject".to_string()),
+                spend: None,
+            })
+        );
     }
 
     #[test]
@@ -336,7 +490,13 @@ mod tests {
         let root_str = root.to_string_lossy().to_string();
         let projects = vec![("proj".to_string(), root.clone())];
         let results = run_tile_cmds("printf '%s' \"$2\"", &projects, Duration::from_secs(5));
-        assert_eq!(results.get("proj"), Some(&root_str));
+        assert_eq!(
+            results.get("proj"),
+            Some(&TileFields {
+                ready: Some(root_str),
+                spend: None,
+            })
+        );
     }
 
     #[test]
@@ -349,7 +509,13 @@ mod tests {
             Duration::from_secs(5),
         );
         let expected = format!("proj|{}", root.to_string_lossy());
-        assert_eq!(results.get("proj"), Some(&expected));
+        assert_eq!(
+            results.get("proj"),
+            Some(&TileFields {
+                ready: Some(expected),
+                spend: None,
+            })
+        );
     }
 
     #[test]
@@ -398,9 +564,27 @@ mod tests {
         ];
         let results = run_tile_cmds("echo $1", &projects, Duration::from_secs(5));
 
-        assert_eq!(results.get("proj1"), Some(&"proj1".to_string()));
-        assert_eq!(results.get("proj2"), Some(&"proj2".to_string()));
-        assert_eq!(results.get("proj3"), Some(&"proj3".to_string()));
+        assert_eq!(
+            results.get("proj1"),
+            Some(&TileFields {
+                ready: Some("proj1".to_string()),
+                spend: None,
+            })
+        );
+        assert_eq!(
+            results.get("proj2"),
+            Some(&TileFields {
+                ready: Some("proj2".to_string()),
+                spend: None,
+            })
+        );
+        assert_eq!(
+            results.get("proj3"),
+            Some(&TileFields {
+                ready: Some("proj3".to_string()),
+                spend: None,
+            })
+        );
     }
 
     #[test]

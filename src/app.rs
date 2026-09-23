@@ -6,7 +6,7 @@
 //! `Effect`, so it's unit-testable without a real tmux server or terminal.
 
 use crate::kill_safety::KillTier;
-use crate::model::SessionRow;
+use crate::model::{SessionRow, TileFields};
 
 /// Editing mode. Mirrors the two-mode contract from parity.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,9 +49,12 @@ pub struct ProjectTile {
     /// Concatenation (row order, no separator) of every row attn value that
     /// isn't the "-" placeholder; "-" when no session has attention flags.
     pub attn: String,
-    /// Value printed by `@picker_tile_cmd` for this project, or "-" when the
-    /// option is unset or the command produced nothing.
+    /// `ready` field printed by `@picker_tile_cmd` for this project, or "-"
+    /// when the option is unset or the field is missing.
     pub ready: String,
+    /// `spend` field printed by `@picker_tile_cmd` for this project, or "-"
+    /// when the option is unset or the field is missing.
+    pub spend: String,
 }
 
 /// Side effect requested by a key event. `None` means "handled internally,
@@ -83,7 +86,7 @@ pub struct App {
     view: View,
     tile_selected: usize,
     drill_selected: usize,
-    tile_info: std::collections::HashMap<String, String>,
+    tile_info: std::collections::HashMap<String, TileFields>,
     /// Free-text usage string shown under the help line; see `model::read_usage`.
     usage: Option<String>,
 }
@@ -199,6 +202,7 @@ impl App {
                     active_count: 0,
                     attn: String::new(),
                     ready: String::new(),
+                    spend: String::new(),
                 });
                 tiles.len() - 1
             });
@@ -218,10 +222,12 @@ impl App {
             if tile.attn.is_empty() {
                 tile.attn = "-".to_string();
             }
-            tile.ready = self
-                .tile_info
-                .get(&tile.project)
-                .cloned()
+            let fields = self.tile_info.get(&tile.project);
+            tile.ready = fields
+                .and_then(|f| f.ready.clone())
+                .unwrap_or_else(|| "-".to_string());
+            tile.spend = fields
+                .and_then(|f| f.spend.clone())
                 .unwrap_or_else(|| "-".to_string());
         }
         tiles
@@ -277,8 +283,9 @@ impl App {
         }
     }
 
-    /// Sets the tile info (project -> ready value) used to fill ProjectTile.ready.
-    pub fn set_tile_info(&mut self, info: std::collections::HashMap<String, String>) {
+    /// Sets the tile info (project -> fields) used to fill ProjectTile's
+    /// `ready` and `spend`.
+    pub fn set_tile_info(&mut self, info: std::collections::HashMap<String, TileFields>) {
         self.tile_info = info;
     }
 
@@ -1079,6 +1086,8 @@ mod tests {
         let tiles = app.tiles();
         assert_eq!(tiles[0].ready, "-");
         assert_eq!(tiles[1].ready, "-");
+        assert_eq!(tiles[0].spend, "-");
+        assert_eq!(tiles[1].spend, "-");
     }
 
     #[test]
@@ -1088,14 +1097,22 @@ mod tests {
             row_with("b1", "proj-b", "merged", "-"),
         ]);
         let mut info = std::collections::HashMap::new();
-        info.insert("proj-a".to_string(), "3".to_string());
+        info.insert(
+            "proj-a".to_string(),
+            TileFields {
+                ready: Some("3".to_string()),
+                spend: Some("$4.20/24h".to_string()),
+            },
+        );
         app.set_tile_info(info);
 
         let tiles = app.tiles();
         assert_eq!(tiles[0].project, "proj-a");
         assert_eq!(tiles[0].ready, "3");
+        assert_eq!(tiles[0].spend, "$4.20/24h");
         assert_eq!(tiles[1].project, "proj-b");
         assert_eq!(tiles[1].ready, "-");
+        assert_eq!(tiles[1].spend, "-");
     }
 
     // --- usage ---

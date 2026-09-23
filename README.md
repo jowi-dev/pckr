@@ -94,8 +94,9 @@ shown in the flat list (resolved locally from git). Each tile shows a
 roll-up: session count, unmerged-branch count, an active count (the number
 of the project's sessions whose `@picker_phase` is `working`), the
 aggregated `@picker_status`/`@picker_server` attention flags (concatenated
-with no separator, or `-` when none set), and a ready count from
-`@picker_tile_cmd` (shown as `<value> ready`, or `- ready` if unset or
+with no separator, or `-` when none set), and two lines from
+`@picker_tile_cmd`: a ready count (`<value> ready`, or `- ready` if unset or
+unavailable) and a spend figure (`<value> spend`, or `- spend` if unset or
 unavailable). pckr itself never calls `tm`; the tiled view works fully
 without `tm` on `PATH`.
 
@@ -123,21 +124,40 @@ at each list build. The command runs as `sh -c "$cmd" sh <project> <root>`,
 where `$1` is the project name and `$2` is the project root, with working
 directory set to the root. The same two values are exported as
 `PICKER_PROJECT` and `PICKER_ROOT`, so a script named directly as the
-command (which sees no positional arguments) still receives them. All projects' commands run concurrently with a
-one-second deadline; commands still running at the deadline are killed. pckr
-reads the first line of stdout (trimmed) and displays it on the tile as
-`<value> ready`. If the option is unset, the command exits non-zero, produces
-no output, or times out, the tile shows `- ready`; nothing is logged or
-displayed. Sessions outside a git repo have no root, so their tile always
-shows `- ready`. This option is optional and joins the frozen contract
-family. For example, a writer script that prints a `tm ready` count:
+command (which sees no positional arguments) still receives them. All
+projects' commands run concurrently with a one-second deadline; commands
+still running at the deadline are killed.
+
+The command's stdout is a set of `key=value` lines, one field per line.
+pckr splits each line at the first `=` and trims the key and the value; if
+a key repeats, the last line wins. Unknown keys, blank lines, and later
+lines with no `=` are ignored, and a field with an empty value counts as
+missing. Two keys are recognized: `ready`, shown on the tile as
+`<value> ready`, and `spend`, shown on the next line as `<value> spend`. A
+missing field shows `-` in its place (`- ready`, `- spend`). As a legacy
+form, if the first non-empty line has no `=`, it is used as the `ready`
+value, so writer scripts that print just a count keep working. If the
+option is unset, the command exits non-zero, or it times out, both fields
+show `-`; nothing is logged or displayed. Sessions outside a git repo have
+no root, so their tile always shows `- ready` and `- spend`. pckr renders
+both values verbatim: no arithmetic, units, or thresholds are applied. The
+writer script picks the spend window and unit (for example tokens or
+currency over the last 24h, computed from `tm runs`). This option is
+optional and joins the frozen contract family. For example, a writer
+script that prints a `tm ready` count and a 24h spend total:
 
 ```tmux
 set -g @picker_tile_cmd '~/bin/ready-count'
 ```
 
+```
+ready=3
+spend=$4.20/24h
+```
+
 The tiled view's per-tile attention roll-up reads only the two per-session
-options above; the ready line is the only thing `@picker_tile_cmd` feeds.
+options above; the ready and spend lines are the only things
+`@picker_tile_cmd` feeds.
 
 The per-session option `@picker_runner` names the agent runner a session
 uses (for example `claude` or `opencode`). pckr renders it verbatim in the
