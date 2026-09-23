@@ -5,6 +5,7 @@ use crate::model::SessionRow;
 const RESET: &str = "\x1b[0m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
+const MAGENTA: &str = "\x1b[35m";
 const DIM: &str = "\x1b[2m";
 
 pub(crate) const HEADERS: [&str; 10] = [
@@ -72,10 +73,10 @@ pub(crate) fn justify_right(text: &str, width: usize) -> String {
 }
 
 /// Padded, ANSI-colored table: header row first, `#` right-justified, all other columns
-/// left-justified, two-space column separators. `status` is green for `merged` only when
-/// no phase is set (a phased `merged` is uncolored), yellow for `unmerged`/`detached`;
-/// `branch` is always dim. Padding spaces are appended outside color codes so trailing
-/// whitespace stays plain.
+/// left-justified, two-space column separators. `phase` is magenta when set to `review`,
+/// uncolored otherwise. `status` is green for `merged` only when no phase is set (a phased
+/// `merged` is uncolored), yellow for `unmerged`/`detached`; `branch` is always dim. Padding
+/// spaces are appended outside color codes so trailing whitespace stays plain.
 pub fn to_table(rows: &[SessionRow]) -> String {
     let widths = compute_column_widths(rows);
 
@@ -99,7 +100,11 @@ pub fn to_table(rows: &[SessionRow]) -> String {
         let session_cell = justify_left(&r.display_name, widths[2]);
         let attn_cell = justify_left(&r.attn, widths[3]);
         let runner_cell = justify_left(&r.runner, widths[4]);
-        let phase_cell = justify_left(&r.phase, widths[5]);
+        let phase_pad = widths[5].saturating_sub(r.phase.chars().count());
+        let phase_cell = match r.phase.as_str() {
+            "review" => format!("{MAGENTA}{}{RESET}{}", r.phase, " ".repeat(phase_pad)),
+            _ => justify_left(&r.phase, widths[5]),
+        };
         let wt_cell = justify_left(&r.wt, widths[6]);
         let project_cell = justify_left(&r.project, widths[7]);
 
@@ -257,5 +262,27 @@ mod tests {
         let rows = vec![row(1, '*', "s", "-", "-", "started", "-", "p", "m", "-")];
         let out = to_plain_tsv(&rows);
         assert_eq!(out, "s\t1\t*\ts\t-\t-\tp\tm\t-\t-");
+    }
+
+    #[test]
+    fn review_phase_is_magenta() {
+        let rows = vec![row(1, '-', "sess", "-", "-", "review", "-", "p", "b", "-")];
+        let out = to_table(&rows);
+        let line = out.lines().nth(1).unwrap();
+        assert!(
+            line.contains(&format!("{MAGENTA}review{RESET}")),
+            "review phase must be magenta: {line}"
+        );
+    }
+
+    #[test]
+    fn started_phase_is_not_colored() {
+        let rows = vec![row(1, '-', "sess", "-", "-", "started", "-", "p", "b", "-")];
+        let out = to_table(&rows);
+        let line = out.lines().nth(1).unwrap();
+        assert!(
+            !line.contains("\x1b[35m"),
+            "started phase must not contain magenta escape code: {line}"
+        );
     }
 }

@@ -453,6 +453,10 @@ fn data_line(
     let status_cell = render::justify_left(&row.status, widths[9]);
 
     let branch_style = base_style.patch(Style::default().add_modifier(Modifier::DIM));
+    let phase_style = match row.phase.as_str() {
+        "review" => base_style.patch(Style::default().fg(Color::Magenta)),
+        _ => base_style,
+    };
     let status_color = match row.status.as_str() {
         "merged" if row.phase == "-" => Some(Color::Green),
         "merged" => None,
@@ -475,7 +479,7 @@ fn data_line(
         Span::raw("  "),
         Span::styled(runner_cell, base_style),
         Span::raw("  "),
-        Span::styled(phase_cell, base_style),
+        Span::styled(phase_cell, phase_style),
         Span::raw("  "),
         Span::styled(wt_cell, base_style),
         Span::raw("  "),
@@ -893,5 +897,68 @@ mod tests {
 
         assert_eq!(merged_fg(unphased), Some(Color::Green));
         assert_ne!(merged_fg(phased), Some(Color::Green));
+    }
+
+    /// Foreground color of the PHASE cell on the frame line showing `name`.
+    fn phase_fg(row: SessionRow) -> Option<Color> {
+        let name = row.display_name.clone();
+        let phase = row.phase.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 10)).unwrap();
+        terminal.draw(|f| draw(f, &App::new(vec![row]))).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).find_map(|y| {
+            let line: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if !line.contains(&name) {
+                return None;
+            }
+            let x = line.find(phase.as_str())?;
+            buffer[(x as u16, y)].fg.into()
+        })
+    }
+
+    #[test]
+    fn review_phase_cell_renders_magenta() {
+        let row = SessionRow {
+            name: "sess".to_string(),
+            idx: 1,
+            marker: '-',
+            display_name: "sess".to_string(),
+            attn: "-".to_string(),
+            runner: "-".to_string(),
+            phase: "review".to_string(),
+            wt: "-".to_string(),
+            project: "proj".to_string(),
+            branch: "main".to_string(),
+            status: "-".to_string(),
+        };
+        assert_eq!(
+            phase_fg(row),
+            Some(Color::Magenta),
+            "review phase must render magenta"
+        );
+    }
+
+    #[test]
+    fn started_phase_cell_is_not_magenta() {
+        let row = SessionRow {
+            name: "sess".to_string(),
+            idx: 1,
+            marker: '-',
+            display_name: "sess".to_string(),
+            attn: "-".to_string(),
+            runner: "-".to_string(),
+            phase: "started".to_string(),
+            wt: "-".to_string(),
+            project: "proj".to_string(),
+            branch: "main".to_string(),
+            status: "-".to_string(),
+        };
+        assert_ne!(
+            phase_fg(row),
+            Some(Color::Magenta),
+            "started phase must not render magenta"
+        );
     }
 }
