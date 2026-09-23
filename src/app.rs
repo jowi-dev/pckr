@@ -44,6 +44,8 @@ pub struct ProjectTile {
     pub session_count: usize,
     /// Rows whose status is exactly "unmerged".
     pub unmerged_count: usize,
+    /// Rows whose phase is exactly "working".
+    pub active_count: usize,
     /// Concatenation (row order, no separator) of every row attn value that
     /// isn't the "-" placeholder; "-" when no session has attention flags.
     pub attn: String,
@@ -181,6 +183,7 @@ impl App {
                     project: row.project.clone(),
                     session_count: 0,
                     unmerged_count: 0,
+                    active_count: 0,
                     attn: String::new(),
                     ready: String::new(),
                 });
@@ -190,6 +193,9 @@ impl App {
             tile.session_count += 1;
             if row.status == "unmerged" {
                 tile.unmerged_count += 1;
+            }
+            if row.phase == "working" {
+                tile.active_count += 1;
             }
             if row.attn != "-" {
                 tile.attn.push_str(&row.attn);
@@ -838,6 +844,27 @@ mod tests {
         let app = App::new(rows(&["alpha"]));
         assert_eq!(app.view(), View::Tiles);
         assert_eq!(app.tile_selected(), 0);
+    }
+
+    #[test]
+    fn tiles_count_working_phase_sessions_as_active() {
+        let mut a1 = row_with("a1", "proj-a", "-", "-");
+        a1.phase = "working".to_string();
+        let mut a2 = row_with("a2", "proj-a", "-", "-");
+        a2.phase = "working".to_string();
+        let mut a3 = row_with("a3", "proj-a", "-", "-");
+        a3.phase = "started".to_string();
+        let mut a4 = row_with("a4", "proj-a", "-", "-");
+        a4.phase = "review".to_string();
+        let a5 = row_with("a5", "proj-a", "-", "-");
+        let b1 = row_with("b1", "proj-b", "-", "-");
+
+        let app = App::new(vec![a1, a2, a3, a4, a5, b1]);
+        let tiles = app.tiles();
+        assert_eq!(tiles[0].project, "proj-a");
+        assert_eq!(tiles[0].active_count, 2);
+        assert_eq!(tiles[1].project, "proj-b");
+        assert_eq!(tiles[1].active_count, 0);
     }
 
     #[test]
