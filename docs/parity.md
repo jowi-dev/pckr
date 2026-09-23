@@ -142,6 +142,15 @@ no classification step. Classification runs once per `x` keypress (skipped
 entirely for the current session, see Kill flow above) and may block briefly,
 since `tm` can consult `gh`.
 
+### PR open (gh dependency contract)
+
+TUI `o` key runs `gh pr view --web` with the session path as the current
+working directory, capturing output (the TUI owns the terminal). First stderr
+line shown on non-zero exit; `gh` not installed → `pr: gh unavailable`. The
+picker stays open in every case: success proceeds silently, failure shows a
+one-line `pr: <error>` message on the prompt line (cleared by the next key
+press, per the status message contract). This key is additive: the bash picker had no equivalent.
+
 ## root-session / jump-root
 
 Resolution order: (1) the session's `@root_session` tmux option if
@@ -154,21 +163,24 @@ client to that session and never aborts the caller.
 
 - NORMAL mode (flat view, one `t` from launch): status line
   `[N] session >`; header/help line
-  `NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close`.
+  `NORMAL — enter:switch | x:kill | o:pr | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close`.
   Keys: `j`/`k` (and arrows) move selection; `enter` switch to selected
   session and exit; `x` on the current session is a silent no-op (short-
   circuits before classification); `x` on any other row classifies it (kill
   flow above) — `safe` kills + refreshes silently, any other tier enters
-  ConfirmKill instead of killing; `g` jump-root of the CURRENT session (no
-  arg) and exit; digits `1`-`9` select row N of the currently visible
-  (filtered) list and accept — no-op if N exceeds visible rows; `i` enter
-  INSERT; `q` or `esc` quit.
+  ConfirmKill instead of killing; `o` runs `gh pr view --web` in the
+  selected session's path, best-effort — the picker stays open; if `gh` is
+  missing, fails, or the session has no path, a one-line `pr: <reason>`
+  message replaces the prompt line until the next key; `g` jump-root of the
+  CURRENT session (no arg) and exit; digits `1`-`9` select row N of the
+  currently visible (filtered) list and accept — no-op if N exceeds visible
+  rows; `i` enter INSERT; `q` or `esc` quit.
 - INSERT mode: status line `[I] filter > <query>`; help line
   `INSERT — type to filter | enter:switch | esc:normal mode`. All typed
   printable chars edit the filter (case-insensitive subsequence match on the
   display row text); backspace deletes; `enter` accepts the selected match;
   `esc` returns to NORMAL keeping the filter applied. Single-key commands
-  (x, q, digits, g, i, j, k) MUST NOT trigger while in INSERT.
+  (x, o, q, digits, g, i, j, k) MUST NOT trigger while in INSERT.
 - ConfirmKill mode (armed when `x` classifies the selected session as
   `live-run`, `root-session`, or `unknown`): help line exactly
   `y=kill  any other key=cancel`; prompt line
@@ -176,9 +188,9 @@ client to that session and never aborts the caller.
   `live run` / `root session` / `unclassified` (unclassified covers
   `unknown`) and the trailing `<reason>` is omitted entirely when the tier's
   reason string is empty. `y`/`Y` confirms and proceeds to the kill flow;
-  ANY other key (including digits, `g`, `i`, `q`, `esc`) cancels back to
+  ANY other key (including digits, `g`, `i`, `o`, `q`, `esc`) cancels back to
   NORMAL, discarding the pending kill, leaving the session and worktree
-  untouched. Single-key NORMAL commands (j, k, g, digits, i, q, x) MUST NOT
+  untouched. Single-key NORMAL commands (j, k, g, digits, i, o, q, x) MUST NOT
   trigger while in ConfirmKill — every non-`y`/`Y` key is swallowed by the
   cancel path instead.
 - The filter persists when returning to NORMAL (digits then index into the

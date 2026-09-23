@@ -49,6 +49,7 @@ NORMAL mode (flat view):
 | `j` / `k` / arrows | Move selection |
 | `enter` | Switch to selected session, exit |
 | `x` | Kill selected session (+ worktree cleanup), refresh — asks for confirmation unless `tm` classifies it safe to reap |
+| `o` | Open the selected session's pull request in the browser (`gh pr view --web`); stays in the picker |
 | `g` | Jump to root session of the current session, exit |
 | `1`-`9` | Jump to and switch to the Nth visible row |
 | `i` | Enter INSERT (filter) mode |
@@ -81,6 +82,7 @@ Tiled view, SESSIONS focus (drilled session list):
 | `j` / `k` | Move selection |
 | `enter` | Switch to selected session, exit |
 | `x` | Kill selected session, same tiered confirmation as flat view |
+| `o` | Open the selected session's pull request in the browser (`gh pr view --web`); stays in the picker |
 | `h` / `esc` | Back to tiles |
 | `t` | Switch to flat view |
 | `q` | Quit |
@@ -230,6 +232,13 @@ Without `tm` on `PATH`, every kill falls into `unknown` and prompts — that's
 the safe default. The tier contract (the exact tokens and their meaning) is
 pinned in tskmstr's `docs/decisions/0005-kill-safety-classification.md`; pckr
 just consumes it.
+
+## Opening a PR
+
+Pressing `o` opens the selected session's pull request in the browser via
+`gh pr view --web`, run in the session's path. `gh` is optional; if it's
+missing or the command fails, a one-line `pr: <error>` message appears on the
+prompt line until the next key press. The picker stays open in all cases.
 
 ## CLI subcommands
 
