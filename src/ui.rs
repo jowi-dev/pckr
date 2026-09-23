@@ -70,13 +70,13 @@ fn key_from_event(code: KeyCode) -> Option<Key> {
     }
 }
 
-/// Reloads rows and tile info from tmux: runs the refresh hook, builds rows,
-/// updates the app, and refreshes tile readiness values.
+/// One list build: refresh hook, rows, tile info, and usage, in that order so
+/// the hook can update `@picker_tile_cmd` inputs and `@picker_usage`.
 fn reload(app: &mut App, tmux: &Tmux) {
     model::run_refresh_hook(tmux);
-    let rows = model::build_rows(tmux);
-    app.set_rows(rows);
+    app.set_rows(model::build_rows(tmux));
     app.set_tile_info(model::build_tile_info(tmux));
+    app.set_usage(model::read_usage(tmux));
 }
 
 /// Entry point: runs the interactive picker to completion. Never returns an
@@ -87,6 +87,7 @@ pub fn run(tmux: &Tmux) -> io::Result<()> {
     let rows = model::build_rows(tmux);
     let mut app = App::new(rows);
     app.set_tile_info(model::build_tile_info(tmux));
+    app.set_usage(model::read_usage(tmux));
 
     install_panic_hook();
     enable_raw_mode()?;
@@ -158,25 +159,49 @@ fn event_loop(
     }
 }
 
-/// Renders one frame: help line, table, prompt line, top to bottom.
+/// Renders one frame: help line, optional usage line, table, prompt line, top to bottom.
 fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let constraints = if app.usage().is_some() {
+        vec![
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(1),
-        ])
+        ]
+    } else {
+        vec![
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(area);
 
-    draw_help_line(frame, chunks[0], app);
-    if app.view() == View::Flat {
-        draw_table(frame, chunks[1], app);
-    } else {
-        draw_tiled(frame, chunks[1], app);
+    let mut idx = 0;
+    draw_help_line(frame, chunks[idx], app);
+    idx += 1;
+
+    if let Some(usage_text) = app.usage() {
+        let usage_line = Paragraph::new(Span::styled(
+            usage_text.to_string(),
+            Style::default().fg(Color::Cyan),
+        ));
+        frame.render_widget(usage_line, chunks[idx]);
+        idx += 1;
     }
-    draw_prompt_line(frame, chunks[2], app);
+
+    if app.view() == View::Flat {
+        draw_table(frame, chunks[idx], app);
+    } else {
+        draw_tiled(frame, chunks[idx], app);
+    }
+    idx += 1;
+
+    draw_prompt_line(frame, chunks[idx], app);
 }
 
 fn draw_help_line(frame: &mut Frame, area: Rect, app: &App) {
@@ -569,6 +594,16 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    fn buffer_line(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area;
+        let mut out = String::new();
+        for x in 0..area.width {
+            out.push_str(buffer[(x, y)].symbol());
+        }
+        out.trim_end().to_string()
     }
 
     #[test]
@@ -1050,5 +1085,98 @@ mod tests {
 
         assert_eq!(merged_fg(unphased), Some(Color::Green));
         assert_ne!(merged_fg(phased), Some(Color::Green));
+    }
+
+    // --- usage header ---
+
+    #[test]
+    fn flat_view_renders_usage_line_under_help_when_set() {
+        let rows = vec![row(1, "alpha", "merged")];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t')); // Tiles is the default; switch to flat
+        app.set_usage(Some("claude 62% | opencode 3.1M tok".into()));
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let line_0 = buffer_line(&terminal, 0);
+        let line_1 = buffer_line(&terminal, 1);
+        let line_2 = buffer_line(&terminal, 2);
+
+        assert!(
+            line_0.contains("NORMAL —"),
+            "line 0 should contain help: {}",
+            line_0
+        );
+        assert!(
+            line_1.contains("claude 62% | opencode 3.1M tok"),
+            "line 1 should contain usage: {}",
+            line_1
+        );
+        assert!(
+            line_2.contains("SESSION"),
+            "line 2 should contain header: {}",
+            line_2
+        );
+    }
+
+    #[test]
+    fn tiles_view_renders_usage_line_under_help_when_set() {
+        let rows = vec![
+            row_with(1, "a1", "projx", "merged", "-"),
+            row_with(2, "b1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.set_usage(Some("claude 62%".into()));
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let line_0 = buffer_line(&terminal, 0);
+        let line_1 = buffer_line(&terminal, 1);
+
+        assert!(
+            line_0.contains("TILES —"),
+            "line 0 should contain tiles help: {}",
+            line_0
+        );
+        assert!(
+            line_1.contains("claude 62%"),
+            "line 1 should contain usage: {}",
+            line_1
+        );
+    }
+
+    #[test]
+    fn header_unchanged_when_usage_unset() {
+        let rows = vec![row(1, "alpha", "merged")];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t')); // Tiles is the default; switch to flat, do not set usage
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let line_0 = buffer_line(&terminal, 0);
+        let line_1 = buffer_line(&terminal, 1);
+
+        assert!(
+            line_0.contains("NORMAL —"),
+            "line 0 should contain help: {}",
+            line_0
+        );
+        assert!(
+            line_1.contains("SESSION"),
+            "line 1 should contain header directly: {}",
+            line_1
+        );
+
+        let text = buffer_text(&terminal);
+        assert!(
+            !text.contains("claude"),
+            "usage text should not appear when unset"
+        );
     }
 }

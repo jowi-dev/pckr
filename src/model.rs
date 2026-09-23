@@ -257,6 +257,13 @@ pub fn build_tile_info(tmux: &Tmux) -> HashMap<String, String> {
     run_tile_cmds(&cmd, &projects, TILE_CMD_TIMEOUT)
 }
 
+/// Reads the global `@picker_usage` tmux option verbatim. Returns None if
+/// unset or empty; the value is rendered on its own line directly under the
+/// top help line of the TUI.
+pub fn read_usage(tmux: &Tmux) -> Option<String> {
+    tmux.show_global_option("@picker_usage")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
