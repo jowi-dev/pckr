@@ -15,7 +15,8 @@ use crate::tmux::Tmux;
 /// One row of the session list. Field order mirrors the table columns; the
 /// `--plain` TSV in docs/parity.md uses the same order except `runner`,
 /// which is appended last (field 10) so positional consumers are unaffected,
-/// and the display-only `phase` (from `@picker_phase`), which `--plain` omits.
+/// and the display-only `phase` (from `@picker_phase`) and `pr` (the
+/// `@picker_pr` value verbatim), which `--plain` omits.
 /// `name` doubles as both the machine key (field 1) and the display copy
 /// (field 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,8 @@ pub struct SessionRow {
     pub project: String,
     pub branch: String,
     pub status: String,
+    /// `@picker_pr` value verbatim; empty when unset. Rendered only, not part of the 9-field TSV.
+    pub pr: String,
 }
 
 /// `@picker_status` and `@picker_server` concatenated with no separator;
@@ -120,6 +123,7 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 project,
                 branch,
                 status,
+                pr: s.picker_pr,
             }
         })
         .collect()

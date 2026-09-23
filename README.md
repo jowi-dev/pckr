@@ -195,6 +195,15 @@ never parses the value; the writer decides what it says. When the option is
 unset or empty, no line is shown. This option is part of the same public
 contract.
 
+`@picker_pr` is an optional, render-only per-session option: free text
+such as `ci:pass rev:1/1`, set with
+`tmux set-option -t <session> @picker_pr "ci:pass rev:1/1"`. When any
+session has it set, pckr adds a trailing PR column to the flat list and
+the drilled session list and shows the value verbatim. pckr never parses
+or colors it (prefix a symbol if you want one), and sessions without it
+are unchanged. Writers refresh it from `@picker_refresh_cmd` or on their
+own schedule. It is not included in `pckr list --plain`.
+
 ## Kill confirmation
 
 Pressing `x` shells out to `tm runs kill-safety <session>` (from

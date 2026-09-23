@@ -7,8 +7,8 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const DIM: &str = "\x1b[2m";
 
-pub(crate) const HEADERS: [&str; 10] = [
-    "#", " ", "SESSION", "ATTN", "RUNNER", "PHASE", "WT", "PROJECT", "BRANCH", "STATUS",
+pub(crate) const HEADERS: [&str; 11] = [
+    "#", " ", "SESSION", "ATTN", "RUNNER", "PHASE", "WT", "PROJECT", "BRANCH", "STATUS", "PR",
 ];
 
 /// Raw 10-field `\t`-delimited rows, one per line, no header.
@@ -33,12 +33,13 @@ pub fn to_plain_tsv(rows: &[SessionRow]) -> String {
         .join("\n")
 }
 
-/// Column widths for the 10 displayed table columns (`#`, marker, SESSION,
-/// ATTN, RUNNER, PHASE, WT, PROJECT, BRANCH, STATUS), computed from plain
-/// (uncolored) text so ANSI escapes never affect alignment. Exposed for
-/// slice 2's TUI to reuse for its own layout.
-pub fn compute_column_widths(rows: &[SessionRow]) -> [usize; 10] {
-    let mut widths: [usize; 10] = HEADERS.map(|h| h.chars().count());
+/// Column widths for the 11 columns (`#`, marker, SESSION, ATTN, RUNNER,
+/// PHASE, WT, PROJECT, BRANCH, STATUS, PR), computed from plain (uncolored)
+/// text so ANSI escapes never affect alignment. Index 10 (PR column) is 0
+/// when every row's pr is empty, else the max of "PR" header width and all
+/// pr cell widths. Exposed for slice 2's TUI to reuse for its own layout.
+pub fn compute_column_widths(rows: &[SessionRow]) -> [usize; 11] {
+    let mut widths: [usize; 11] = HEADERS.map(|h| h.chars().count());
     for r in rows {
         let cells = [
             r.idx.to_string(),
@@ -51,10 +52,14 @@ pub fn compute_column_widths(rows: &[SessionRow]) -> [usize; 10] {
             r.project.clone(),
             r.branch.clone(),
             r.status.clone(),
+            r.pr.clone(),
         ];
         for (i, c) in cells.iter().enumerate() {
             widths[i] = widths[i].max(c.chars().count());
         }
+    }
+    if rows.iter().all(|r| r.pr.is_empty()) {
+        widths[10] = 0;
     }
     widths
 }
@@ -79,7 +84,7 @@ pub(crate) fn justify_right(text: &str, width: usize) -> String {
 pub fn to_table(rows: &[SessionRow]) -> String {
     let widths = compute_column_widths(rows);
 
-    let header_cells = [
+    let mut header_cells = vec![
         justify_right(HEADERS[0], widths[0]),
         justify_left(HEADERS[1], widths[1]),
         justify_left(HEADERS[2], widths[2]),
@@ -91,6 +96,9 @@ pub fn to_table(rows: &[SessionRow]) -> String {
         justify_left(HEADERS[8], widths[8]),
         justify_left(HEADERS[9], widths[9]),
     ];
+    if widths[10] > 0 {
+        header_cells.push(justify_left(HEADERS[10], widths[10]));
+    }
     let mut lines = vec![header_cells.join("  ").trim_end().to_string()];
 
     for r in rows {
@@ -118,7 +126,7 @@ pub fn to_table(rows: &[SessionRow]) -> String {
             None => justify_left(&r.status, widths[9]),
         };
 
-        let cells = [
+        let mut cells = vec![
             idx_cell,
             marker_cell,
             session_cell,
@@ -130,6 +138,9 @@ pub fn to_table(rows: &[SessionRow]) -> String {
             branch_cell,
             status_cell,
         ];
+        if widths[10] > 0 {
+            cells.push(justify_left(&r.pr, widths[10]));
+        }
         lines.push(cells.join("  ").trim_end().to_string());
     }
 
@@ -165,6 +176,7 @@ mod tests {
             project: project.to_string(),
             branch: branch.to_string(),
             status: status.to_string(),
+            pr: String::new(),
         }
     }
 
@@ -257,5 +269,75 @@ mod tests {
         let rows = vec![row(1, '*', "s", "-", "-", "started", "-", "p", "m", "-")];
         let out = to_plain_tsv(&rows);
         assert_eq!(out, "s\t1\t*\ts\t-\t-\tp\tm\t-\t-");
+    }
+
+    #[test]
+    fn table_appends_pr_column_when_any_row_has_pr() {
+        let mut rows = vec![
+            row(1, '*', "s", "-", "-", "-", "-", "p", "m", "-"),
+            row(2, '-', "t", "-", "-", "-", "-", "q", "n", "merged"),
+        ];
+        rows[0].pr = "ci:pass rev:1/1".to_string();
+
+        let output = to_table(&rows);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Check header contains PR column
+        assert!(
+            lines[0].ends_with("STATUS  PR"),
+            "header must end with 'STATUS  PR': {}\n{}",
+            lines[0],
+            output
+        );
+
+        // Check first row (with pr) contains the pr value
+        assert!(
+            lines[1].ends_with("  ci:pass rev:1/1"),
+            "row with pr must contain the pr value: {}\n{}",
+            lines[1],
+            output
+        );
+
+        // Check second row (without pr) has no trailing whitespace and doesn't contain "ci:"
+        assert_eq!(lines[2], lines[2].trim_end(), "no trailing whitespace");
+        assert!(
+            !lines[2].contains("ci:"),
+            "row without pr must not contain ci:: {}\n{}",
+            lines[2],
+            output
+        );
+    }
+
+    #[test]
+    fn table_has_no_pr_column_when_no_row_has_pr() {
+        let rows = vec![
+            row(1, '*', "s", "-", "-", "-", "-", "p", "m", "-"),
+            row(2, '-', "t", "-", "-", "-", "-", "q", "n", "merged"),
+        ];
+
+        let output = to_table(&rows);
+        let lines: Vec<&str> = output.lines().collect();
+
+        assert!(
+            lines[0].ends_with("STATUS"),
+            "header must end at STATUS when no row has pr: {}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn plain_tsv_ignores_pr() {
+        let mut row = row(1, '*', "s", "-", "-", "-", "-", "p", "m", "-");
+        row.pr = "ci:fail".to_string();
+
+        let out = to_plain_tsv(&[row]);
+        let fields: Vec<&str> = out.split('\t').collect();
+
+        assert_eq!(
+            fields.len(),
+            10,
+            "plain TSV must have exactly 10 fields even with pr set: {}",
+            out
+        );
     }
 }

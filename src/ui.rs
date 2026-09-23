@@ -462,8 +462,8 @@ fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(data_lines).scroll((scroll, 0)), data_area);
 }
 
-fn header_line(widths: &[usize; 10]) -> Line<'static> {
-    let cells = [
+fn header_line(widths: &[usize; 11]) -> Line<'static> {
+    let mut cells = vec![
         render::justify_right(render::HEADERS[0], widths[0]),
         render::justify_left(render::HEADERS[1], widths[1]),
         render::justify_left(render::HEADERS[2], widths[2]),
@@ -475,12 +475,15 @@ fn header_line(widths: &[usize; 10]) -> Line<'static> {
         render::justify_left(render::HEADERS[8], widths[8]),
         render::justify_left(render::HEADERS[9], widths[9]),
     ];
+    if widths[10] > 0 {
+        cells.push(render::justify_left(render::HEADERS[10], widths[10]));
+    }
     Line::from(cells.join("  "))
 }
 
 fn data_line(
     row: &crate::model::SessionRow,
-    widths: &[usize; 10],
+    widths: &[usize; 11],
     selected: bool,
 ) -> Line<'static> {
     let base_style = if selected {
@@ -512,7 +515,7 @@ fn data_line(
         None => base_style,
     };
 
-    let spans = vec![
+    let mut spans = vec![
         Span::styled(idx_cell, base_style),
         Span::raw("  "),
         Span::styled(marker_cell, base_style),
@@ -533,6 +536,13 @@ fn data_line(
         Span::raw("  "),
         Span::styled(status_cell, status_style),
     ];
+    if widths[10] > 0 {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            render::justify_left(&row.pr, widths[10]),
+            base_style,
+        ));
+    }
 
     Line::from(spans)
 }
@@ -556,6 +566,7 @@ mod tests {
             project: "proj".to_string(),
             branch: "main".to_string(),
             status: status.to_string(),
+            pr: String::new(),
         }
     }
 
@@ -572,6 +583,31 @@ mod tests {
             project: project.to_string(),
             branch: "main".to_string(),
             status: status.to_string(),
+            pr: String::new(),
+        }
+    }
+
+    fn row_with_pr(
+        idx: usize,
+        name: &str,
+        project: &str,
+        status: &str,
+        attn: &str,
+        pr: &str,
+    ) -> SessionRow {
+        SessionRow {
+            name: name.to_string(),
+            idx,
+            marker: '-',
+            display_name: name.to_string(),
+            attn: attn.to_string(),
+            runner: "-".to_string(),
+            phase: "-".to_string(),
+            wt: "-".to_string(),
+            project: project.to_string(),
+            branch: "main".to_string(),
+            status: status.to_string(),
+            pr: pr.to_string(),
         }
     }
 
@@ -1193,6 +1229,72 @@ mod tests {
         assert!(
             !text.contains("claude"),
             "usage text should not appear when unset"
+        );
+    }
+
+    #[test]
+    fn flat_view_renders_pr_column_when_any_row_has_pr() {
+        let rows = vec![
+            row_with_pr(1, "session-a", "proj", "merged", "-", "ci:fail"),
+            row_with_pr(2, "session-b", "proj", "merged", "-", ""),
+        ];
+        let app = flat_app(rows);
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("ci:fail"),
+            "PR column must render pr value:\n{text}"
+        );
+        assert!(
+            text.contains("STATUS  PR"),
+            "header must contain PR:\n{text}"
+        );
+    }
+
+    #[test]
+    fn flat_view_omits_pr_column_when_no_row_has_pr() {
+        let rows = vec![
+            row_with(1, "session-a", "proj", "merged", "-"),
+            row_with(2, "session-b", "proj", "merged", "-"),
+        ];
+        let app = flat_app(rows);
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            !text.contains("STATUS  PR"),
+            "header must not contain PR when no pr is set:\n{text}"
+        );
+    }
+
+    #[test]
+    fn drilled_view_renders_pr_column_in_session_list() {
+        let rows = vec![
+            row_with_pr(1, "sess-aaa-1", "projx", "merged", "-", "ci:pass rev:1/1"),
+            row_with(2, "sess-bbb-1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Enter); // Enter drilled view
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("ci:pass rev:1/1"),
+            "drilled view must show pr value in session list:\n{text}"
+        );
+        assert!(
+            text.contains("sess-aaa-1"),
+            "drilled view must show the session:\n{text}"
         );
     }
 }

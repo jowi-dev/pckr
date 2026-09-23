@@ -27,7 +27,7 @@ by falling through to the interactive UI; do not reproduce that bug).
 
 ## Session list
 
-Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}'`.
+Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}'`.
 
 Row fields (the 10-field TSV output for `--plain`, one row per session):
 1. `name` — machine key, never displayed.
@@ -52,6 +52,17 @@ Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `RUNNER`, `PHASE`,
 `status` green when `merged` and no phase is set; `merged` with a phase
 set is uncolored; yellow when `unmerged`/`detached`; `branch` always dim;
 nothing else colored.
+
+### PR column (additive, GH-16)
+
+The per-session user option `@picker_pr` is free text set by an outside
+writer (e.g. `ci:pass rev:1/1`). When at least one row has a non-empty
+value, the table (`pckr list`, the TUI flat view, and the tiled view's
+drilled session list) appends a trailing `PR` column after `STATUS`,
+rendering each value verbatim and uncolored; rows without a value get an
+empty cell. When no row has a value the column is omitted and output is
+identical to the parity table above. `@picker_pr` is not part of the
+10-field `--plain` TSV. pckr never parses the value.
 
 ### Refresh hook (plugin trigger contract — NEW, replaces hardcoded phoenix call)
 
@@ -202,3 +213,5 @@ ConfirmKill flow described above. Tiles also roll up an active count from
   renders the recognized fields verbatim.
 - `@picker_phase` writers (tm runs / devtools hooks) live outside pckr; pckr
   only renders the value verbatim.
+- `@picker_pr` content (CI/review state) is produced by the writer; pckr
+  only renders the option value.
