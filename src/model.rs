@@ -1,4 +1,4 @@
-//! Session row model: turns raw tmux + git data into the 10-field row shape
+//! Session row model: turns raw tmux + git data into the 11-field row shape
 //! described in docs/parity.md.
 
 use std::collections::HashMap;
@@ -15,10 +15,12 @@ use crate::tmux::Tmux;
 /// One row of the session list. Field order mirrors the table columns; the
 /// `--plain` TSV in docs/parity.md uses the same order except `runner`,
 /// which is appended last (field 10) so positional consumers are unaffected,
-/// and the display-only `phase` (from `@picker_phase`) and `pr` (the
-/// `@picker_pr` value verbatim), which `--plain` omits.
+/// the age of `last_active`, appended after it (field 11), and the
+/// display-only `phase` (from `@picker_phase`) and `pr` (the `@picker_pr`
+/// value verbatim), which `--plain` omits.
 /// `name` doubles as both the machine key (field 1) and the display copy
-/// (field 4).
+/// (field 4). `last_active` is the parsed @picker_last_active epoch; None
+/// when unset or unparseable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRow {
     pub name: String,
@@ -32,8 +34,9 @@ pub struct SessionRow {
     pub project: String,
     pub branch: String,
     pub status: String,
-    /// `@picker_pr` value verbatim; empty when unset. Rendered only, not part of the 9-field TSV.
+    /// `@picker_pr` value verbatim; empty when unset. Rendered only, not part of the `--plain` TSV.
     pub pr: String,
+    pub last_active: Option<u64>,
 }
 
 /// `@picker_status` and `@picker_server` concatenated with no separator;
@@ -170,6 +173,7 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 branch,
                 status,
                 pr: s.picker_pr,
+                last_active: parse_epoch(&s.picker_last_active),
             }
         })
         .collect()

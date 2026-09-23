@@ -577,6 +577,7 @@ mod tests {
             branch: "-".to_string(),
             status: "-".to_string(),
             pr: String::new(),
+            last_active: None,
         }
     }
 
@@ -608,6 +609,7 @@ mod tests {
             branch: "-".to_string(),
             status: status.to_string(),
             pr: String::new(),
+            last_active: None,
         }
     }
 

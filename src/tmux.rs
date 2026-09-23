@@ -17,6 +17,7 @@ pub struct SessionEntry {
     pub picker_runner: String,
     pub picker_phase: String,
     pub picker_pr: String,
+    pub picker_last_active: String,
 }
 
 /// Wraps `std::process::Command` invocations of `tmux`, transparently
@@ -48,14 +49,14 @@ impl Tmux {
         cmd
     }
 
-    /// `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}'`
+    /// `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}|#{@picker_last_active}'`
     pub fn list_sessions(&self) -> Vec<SessionEntry> {
         let output = self
             .command()
             .args([
                 "list-sessions",
                 "-F",
-                "#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}",
+                "#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}|#{@picker_last_active}",
             ])
             .output();
 
@@ -65,27 +66,7 @@ impl Tmux {
         };
 
         let text = String::from_utf8_lossy(&output.stdout);
-        text.lines()
-            .filter_map(|line| {
-                let mut parts = line.splitn(7, '|');
-                let name = parts.next()?.to_string();
-                let path = parts.next()?.to_string();
-                let picker_status = parts.next().unwrap_or("").to_string();
-                let picker_server = parts.next().unwrap_or("").to_string();
-                let picker_runner = parts.next().unwrap_or("").to_string();
-                let picker_phase = parts.next().unwrap_or("").to_string();
-                let picker_pr = parts.next().unwrap_or("").to_string();
-                Some(SessionEntry {
-                    name,
-                    path,
-                    picker_status,
-                    picker_server,
-                    picker_runner,
-                    picker_phase,
-                    picker_pr,
-                })
-            })
-            .collect()
+        text.lines().filter_map(parse_session_line).collect()
     }
 
     /// `tmux display-message -p '#S'`
@@ -176,5 +157,87 @@ impl Tmux {
         } else {
             Some(s)
         }
+    }
+}
+
+/// Parses a single session line from `tmux list-sessions` output.
+/// Format: name|path|status|server|runner|phase|pr|last_active
+/// The pr field may contain `|`, so we peel off the last field first,
+/// then parse the remaining prefix with splitn(7, '|').
+fn parse_session_line(line: &str) -> Option<SessionEntry> {
+    // Split off the last field (epoch timestamp)
+    let (prefix, picker_last_active) = line.rsplit_once('|')?;
+
+    // Parse the remaining 7 fields
+    let mut parts = prefix.splitn(7, '|');
+    let name = parts.next()?.to_string();
+    let path = parts.next()?.to_string();
+    let picker_status = parts.next().unwrap_or("").to_string();
+    let picker_server = parts.next().unwrap_or("").to_string();
+    let picker_runner = parts.next().unwrap_or("").to_string();
+    let picker_phase = parts.next().unwrap_or("").to_string();
+    let picker_pr = parts.next().unwrap_or("").to_string();
+
+    Some(SessionEntry {
+        name,
+        path,
+        picker_status,
+        picker_server,
+        picker_runner,
+        picker_phase,
+        picker_pr,
+        picker_last_active: picker_last_active.to_string(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_normal_eight_field_line() {
+        let line = "myses|/home/user|active|unix|claude|started|ci:pass|1700000000";
+        let entry = parse_session_line(line).expect("failed to parse");
+        assert_eq!(entry.name, "myses");
+        assert_eq!(entry.path, "/home/user");
+        assert_eq!(entry.picker_status, "active");
+        assert_eq!(entry.picker_server, "unix");
+        assert_eq!(entry.picker_runner, "claude");
+        assert_eq!(entry.picker_phase, "started");
+        assert_eq!(entry.picker_pr, "ci:pass");
+        assert_eq!(entry.picker_last_active, "1700000000");
+    }
+
+    #[test]
+    fn parse_pr_field_with_pipe() {
+        let line = "s|/p|?|srv|-|-|a|b|1700000000";
+        let entry = parse_session_line(line).expect("failed to parse");
+        assert_eq!(entry.name, "s");
+        assert_eq!(entry.path, "/p");
+        assert_eq!(entry.picker_status, "?");
+        assert_eq!(entry.picker_server, "srv");
+        assert_eq!(entry.picker_pr, "a|b");
+        assert_eq!(entry.picker_last_active, "1700000000");
+    }
+
+    #[test]
+    fn parse_empty_trailing_options() {
+        let line = "s|/p||||||1700000000";
+        let entry = parse_session_line(line).expect("failed to parse");
+        assert_eq!(entry.name, "s");
+        assert_eq!(entry.path, "/p");
+        assert_eq!(entry.picker_status, "");
+        assert_eq!(entry.picker_server, "");
+        assert_eq!(entry.picker_runner, "");
+        assert_eq!(entry.picker_phase, "");
+        assert_eq!(entry.picker_pr, "");
+        assert_eq!(entry.picker_last_active, "1700000000");
+    }
+
+    #[test]
+    fn parse_no_pipe_returns_none() {
+        let line = "just_a_name";
+        let entry = parse_session_line(line);
+        assert!(entry.is_none());
     }
 }
