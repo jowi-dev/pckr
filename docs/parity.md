@@ -51,7 +51,7 @@ Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `RUNNER`, `PHASE`,
 (`#` right-justified, rest left), two spaces between columns. Colors:
 `status` green when `merged` and no phase is set; `merged` with a phase
 set is uncolored; yellow when `unmerged`/`detached`; `branch` always dim;
-nothing else colored.
+`phase` magenta when `review` (GH-13); nothing else colored.
 
 ### Refresh hook (plugin trigger contract — NEW, replaces hardcoded phoenix call)
 

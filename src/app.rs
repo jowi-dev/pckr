@@ -43,6 +43,8 @@ pub struct ProjectTile {
     pub session_count: usize,
     /// Rows whose status is exactly "unmerged".
     pub unmerged_count: usize,
+    /// Rows whose phase is exactly "review".
+    pub review_count: usize,
     /// Concatenation (row order, no separator) of every row attn value that
     /// isn't the "-" placeholder; "-" when no session has attention flags.
     pub attn: String,
@@ -178,6 +180,7 @@ impl App {
                     project: row.project.clone(),
                     session_count: 0,
                     unmerged_count: 0,
+                    review_count: 0,
                     attn: String::new(),
                     ready: String::new(),
                 });
@@ -187,6 +190,9 @@ impl App {
             tile.session_count += 1;
             if row.status == "unmerged" {
                 tile.unmerged_count += 1;
+            }
+            if row.phase == "review" {
+                tile.review_count += 1;
             }
             if row.attn != "-" {
                 tile.attn.push_str(&row.attn);
@@ -803,20 +809,22 @@ mod tests {
 
     #[test]
     fn tiles_group_by_project_in_first_appearance_order_with_rollups() {
-        let app = App::new(vec![
-            row_with("a1", "proj-a", "unmerged", "-"),
-            row_with("b1", "proj-b", "merged", "-"),
-            row_with("a2", "proj-a", "merged", "!"),
-        ]);
+        let mut a1 = row_with("a1", "proj-a", "unmerged", "-");
+        a1.phase = "review".to_string();
+        let mut a2 = row_with("a2", "proj-a", "merged", "!");
+        a2.phase = "started".to_string();
+        let app = App::new(vec![a1, row_with("b1", "proj-b", "merged", "-"), a2]);
         let tiles = app.tiles();
         assert_eq!(tiles.len(), 2);
         assert_eq!(tiles[0].project, "proj-a");
         assert_eq!(tiles[0].session_count, 2);
         assert_eq!(tiles[0].unmerged_count, 1);
+        assert_eq!(tiles[0].review_count, 1);
         assert_eq!(tiles[0].attn, "!");
         assert_eq!(tiles[1].project, "proj-b");
         assert_eq!(tiles[1].session_count, 1);
         assert_eq!(tiles[1].unmerged_count, 0);
+        assert_eq!(tiles[1].review_count, 0);
         assert_eq!(tiles[1].attn, "-");
     }
 
