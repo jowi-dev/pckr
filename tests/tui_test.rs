@@ -520,6 +520,72 @@ fn phase_column_renders_picker_phase_in_flat_and_drilled_views() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn review_phase_renders_in_row_and_tile_rollup() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("review");
+
+    let dir_a = fresh_dir("review-a");
+    let dir_b = fresh_dir("review-b");
+    let dir_host = fresh_dir("review-host");
+
+    server.new_session("session-a", &dir_a, &["sh"]);
+    server.new_session("session-b", &dir_b, &["sh"]);
+    server.set_option("session-a", "@picker_phase", "review");
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("session-b"),
+    );
+
+    let lines: Vec<&str> = text.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.contains("PHASE"))
+        .expect("PHASE header must be present");
+
+    // Check phase column values in flat view
+    let a_line = lines
+        .iter()
+        .find(|l| l.contains("session-a"))
+        .expect("session-a must be present");
+    assert_column_value(header, "PHASE", a_line, "review");
+
+    let b_line = lines
+        .iter()
+        .find(|l| l.contains("session-b"))
+        .expect("session-b must be present");
+    assert_column_value(header, "PHASE", b_line, "-");
+
+    // Verify STATUS is still reported and not replaced by phase
+    // Non-git directories should show "-" for STATUS
+    let status_header = lines
+        .iter()
+        .find(|l| l.contains("STATUS"))
+        .expect("STATUS header must be present");
+    assert_column_value(status_header, "STATUS", a_line, "-");
+    assert_column_value(status_header, "STATUS", b_line, "-");
+
+    // Enter tiles view and verify review count appears
+    server.send_literal("pckr-host", "t");
+    let tiles_text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("TILES"),
+    );
+    assert!(
+        tiles_text.contains("1 review"),
+        "tile rollup must show '1 review' for the review session:\n{tiles_text}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
 // --- (c) modal safety -----------------------------------------------------
 
 #[test]
