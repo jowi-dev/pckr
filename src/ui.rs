@@ -34,7 +34,7 @@ const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 /// Minimum tile card dimensions: width in columns, height in lines
 /// (2 border + 3 content lines: title, counts, ready — the floor that keeps
 /// each line legible).
-const MIN_TILE_WIDTH: u16 = 28;
+const MIN_TILE_WIDTH: u16 = 34;
 const MIN_TILE_HEIGHT: u16 = 5;
 
 /// Restores the terminal to its pre-TUI state (raw mode off, alternate
@@ -399,8 +399,8 @@ fn draw_tile_card(
         Style::default().add_modifier(Modifier::BOLD),
     ));
     let rollup_line = Line::from(format!(
-        "{} sess  {} unmerged  {}",
-        tile.session_count, tile.unmerged_count, tile.attn
+        "{} sess  {} unmerged  {} active  {}",
+        tile.session_count, tile.unmerged_count, tile.active_count, tile.attn
     ));
     let ready_line = Line::from(format!("{} ready", tile.ready));
 
@@ -995,6 +995,32 @@ mod tests {
         assert!(
             text.contains("- ready"),
             "projy tile should show '- ready':\n{text}"
+        );
+    }
+
+    #[test]
+    fn tiles_view_renders_active_count() {
+        let mut a1 = row_with(1, "a1", "projx", "-", "-");
+        a1.phase = "working".to_string();
+        let mut a2 = row_with(2, "a2", "projx", "-", "-");
+        a2.phase = "working".to_string();
+        let a3 = row_with(3, "a3", "projx", "-", "-");
+        let b1 = row_with(4, "b1", "projy", "-", "-");
+
+        let app = App::new(vec![a1, a2, a3, b1]);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("2 active"),
+            "projx tile should show '2 active':\n{text}"
+        );
+        assert!(
+            text.contains("0 active"),
+            "projy tile should show '0 active':\n{text}"
         );
     }
 
