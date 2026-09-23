@@ -130,6 +130,13 @@ set -g @picker_tile_cmd '~/bin/ready-count'
 The tiled view's per-tile attention roll-up reads only the two per-session
 options above; the ready line is the only thing `@picker_tile_cmd` feeds.
 
+The per-session option `@picker_runner` names the agent runner a session
+uses (for example `claude` or `opencode`). pckr renders it verbatim in the
+RUNNER column of the flat and drilled session lists, `-` when unset; the
+lane launcher sets it with `tmux set-option -t <session> @picker_runner
+claude`. It is render-only: there is no allowlist of runner names and pckr
+never acts on the value.
+
 ## Kill confirmation
 
 Pressing `x` shells out to `tm runs kill-safety <session>` (from
