@@ -4,6 +4,7 @@
 
 use std::io::{self, Stdout};
 use std::panic;
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -30,6 +31,9 @@ const DRILLED_HELP: &str =
     "SESSIONS — j/k:move | enter:switch | x:kill | h/esc:back | t:flat | q:quit";
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
+
+/// Redraw interval keeps the AGE column current between keypresses.
+const AGE_REDRAW_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Minimum tile card dimensions: width in columns, height in lines
 /// (2 border + 4 content lines: title, counts, ready, spend — the floor that
@@ -118,6 +122,9 @@ fn event_loop(
     loop {
         terminal.draw(|f| draw(f, app))?;
 
+        if !event::poll(AGE_REDRAW_INTERVAL)? {
+            continue;
+        }
         let event = event::read()?;
         let Event::Key(key_event) = event else {
             continue;
@@ -161,6 +168,12 @@ fn event_loop(
 
 /// Renders one frame: help line, optional usage line, table, prompt line, top to bottom.
 fn draw(frame: &mut Frame, app: &App) {
+    let now = model::now_epoch();
+    draw_at(frame, app, now);
+}
+
+/// Internal draw function that takes a fixed `now` for testing.
+fn draw_at(frame: &mut Frame, app: &App, now: u64) {
     let area = frame.area();
     let constraints = if app.usage().is_some() {
         vec![
@@ -195,9 +208,9 @@ fn draw(frame: &mut Frame, app: &App) {
     }
 
     if app.view() == View::Flat {
-        draw_table(frame, chunks[idx], app);
+        draw_table(frame, chunks[idx], app, now);
     } else {
-        draw_tiled(frame, chunks[idx], app);
+        draw_tiled(frame, chunks[idx], app, now);
     }
     idx += 1;
 
@@ -262,8 +275,8 @@ fn confirm_kill_prompt(app: &App) -> String {
 /// rows (scrolled, in the remaining lines) so that the header is always
 /// visible and the selected row is always within the viewport, even when
 /// the filtered row count exceeds the available height.
-fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
-    let widths = render::compute_column_widths(app.rows());
+fn draw_table(frame: &mut Frame, area: Rect, app: &App, now: u64) {
+    let widths = render::compute_column_widths(app.rows(), now);
     let filtered = app.filtered_rows();
 
     let chunks = Layout::default()
@@ -278,7 +291,7 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
     let data_lines: Vec<Line> = filtered
         .iter()
         .enumerate()
-        .map(|(i, row)| data_line(row, &widths, i == app.selected()))
+        .map(|(i, row)| data_line(row, &widths, i == app.selected(), now))
         .collect();
 
     let scroll = data_scroll_offset(data_lines.len(), app.selected(), data_area.height);
@@ -318,7 +331,7 @@ fn tile_grid_dims(num_tiles: usize, area: Rect) -> (usize, usize) {
 /// area. In `View::Drilled`, a breadcrumb naming the selected project is
 /// rendered on line 0, and the project's session list (header + rows) fills
 /// the rest.
-fn draw_tiled(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_tiled(frame: &mut Frame, area: Rect, app: &App, now: u64) {
     let tiles = app.tiles();
 
     match app.view() {
@@ -346,7 +359,7 @@ fn draw_tiled(frame: &mut Frame, area: Rect, app: &App) {
                 Paragraph::new(breadcrumb).style(Style::default().add_modifier(Modifier::BOLD)),
                 chunks[0],
             );
-            draw_drilled_list(frame, chunks[1], app);
+            draw_drilled_list(frame, chunks[1], app, now);
         }
         View::Flat => {} // Flat view is drawn by draw_table.
     }
@@ -438,9 +451,9 @@ fn draw_tile_card(
 
 /// Renders the tile-selected project's session list (header + rows), with
 /// the row-selected styling applied only when focus is on `View::Drilled`.
-fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App, now: u64) {
     let drilled: Vec<crate::model::SessionRow> = app.drilled_rows().into_iter().cloned().collect();
-    let widths = render::compute_column_widths(&drilled);
+    let widths = render::compute_column_widths(&drilled, now);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -455,14 +468,21 @@ fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App) {
     let data_lines: Vec<Line> = drilled
         .iter()
         .enumerate()
-        .map(|(i, row)| data_line(row, &widths, drilled_focus && i == app.drill_selected()))
+        .map(|(i, row)| {
+            data_line(
+                row,
+                &widths,
+                drilled_focus && i == app.drill_selected(),
+                now,
+            )
+        })
         .collect();
 
     let scroll = data_scroll_offset(data_lines.len(), app.drill_selected(), data_area.height);
     frame.render_widget(Paragraph::new(data_lines).scroll((scroll, 0)), data_area);
 }
 
-fn header_line(widths: &[usize; 11]) -> Line<'static> {
+fn header_line(widths: &[usize; 12]) -> Line<'static> {
     let mut cells = vec![
         render::justify_right(render::HEADERS[0], widths[0]),
         render::justify_left(render::HEADERS[1], widths[1]),
@@ -474,17 +494,19 @@ fn header_line(widths: &[usize; 11]) -> Line<'static> {
         render::justify_left(render::HEADERS[7], widths[7]),
         render::justify_left(render::HEADERS[8], widths[8]),
         render::justify_left(render::HEADERS[9], widths[9]),
+        render::justify_left(render::HEADERS[10], widths[10]),
     ];
-    if widths[10] > 0 {
-        cells.push(render::justify_left(render::HEADERS[10], widths[10]));
+    if widths[11] > 0 {
+        cells.push(render::justify_left(render::HEADERS[11], widths[11]));
     }
     Line::from(cells.join("  "))
 }
 
 fn data_line(
     row: &crate::model::SessionRow,
-    widths: &[usize; 11],
+    widths: &[usize; 12],
     selected: bool,
+    now: u64,
 ) -> Line<'static> {
     let base_style = if selected {
         Style::default().add_modifier(Modifier::REVERSED)
@@ -496,12 +518,21 @@ fn data_line(
     let marker_cell = render::justify_left(&row.marker.to_string(), widths[1]);
     let session_cell = render::justify_left(&row.display_name, widths[2]);
     let attn_cell = render::justify_left(&row.attn, widths[3]);
-    let runner_cell = render::justify_left(&row.runner, widths[4]);
-    let phase_cell = render::justify_left(&row.phase, widths[5]);
-    let wt_cell = render::justify_left(&row.wt, widths[6]);
-    let project_cell = render::justify_left(&row.project, widths[7]);
-    let branch_cell = render::justify_left(&row.branch, widths[8]);
-    let status_cell = render::justify_left(&row.status, widths[9]);
+
+    let age = model::age_cell(row.last_active, now);
+    let age_style = if model::is_stale(row.last_active, now) {
+        base_style.patch(Style::default().fg(Color::Red))
+    } else {
+        base_style
+    };
+    let age_cell = render::justify_left(&age, widths[4]);
+
+    let runner_cell = render::justify_left(&row.runner, widths[5]);
+    let phase_cell = render::justify_left(&row.phase, widths[6]);
+    let wt_cell = render::justify_left(&row.wt, widths[7]);
+    let project_cell = render::justify_left(&row.project, widths[8]);
+    let branch_cell = render::justify_left(&row.branch, widths[9]);
+    let status_cell = render::justify_left(&row.status, widths[10]);
 
     let branch_style = base_style.patch(Style::default().add_modifier(Modifier::DIM));
     let status_color = match row.status.as_str() {
@@ -524,6 +555,8 @@ fn data_line(
         Span::raw("  "),
         Span::styled(attn_cell, base_style),
         Span::raw("  "),
+        Span::styled(age_cell, age_style),
+        Span::raw("  "),
         Span::styled(runner_cell, base_style),
         Span::raw("  "),
         Span::styled(phase_cell, base_style),
@@ -536,10 +569,10 @@ fn data_line(
         Span::raw("  "),
         Span::styled(status_cell, status_style),
     ];
-    if widths[10] > 0 {
+    if widths[11] > 0 {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            render::justify_left(&row.pr, widths[10]),
+            render::justify_left(&row.pr, widths[11]),
             base_style,
         ));
     }
@@ -567,6 +600,7 @@ mod tests {
             branch: "main".to_string(),
             status: status.to_string(),
             pr: String::new(),
+            last_active: None,
         }
     }
 
@@ -584,6 +618,7 @@ mod tests {
             branch: "main".to_string(),
             status: status.to_string(),
             pr: String::new(),
+            last_active: None,
         }
     }
 
@@ -608,6 +643,7 @@ mod tests {
             branch: "main".to_string(),
             status: status.to_string(),
             pr: pr.to_string(),
+            last_active: None,
         }
     }
 
@@ -619,6 +655,15 @@ mod tests {
         app.handle_key(Key::Char('t'));
         assert_eq!(app.view(), View::Flat);
         app
+    }
+
+    /// The buffer cell where the first data row's AGE value starts, located
+    /// by the `AGE` header text so the test survives column-width changes.
+    fn first_row_age_cell(terminal: &Terminal<TestBackend>) -> ratatui::buffer::Cell {
+        let text = buffer_text(terminal);
+        let header = text.lines().nth(1).expect("missing header line");
+        let age_x = header.find("AGE").expect("AGE column not found in header") as u16;
+        terminal.backend().buffer()[(age_x, 2)].clone()
     }
 
     fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
@@ -1295,6 +1340,67 @@ mod tests {
         assert!(
             text.contains("sess-aaa-1"),
             "drilled view must show the session:\n{text}"
+        );
+    }
+
+    #[test]
+    fn flat_view_renders_age_column() {
+        let mut rows = vec![row(1, "alpha", "merged")];
+        rows[0].last_active = Some(1000 - 180);
+        let app = flat_app(rows);
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_at(f, &app, 1000)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("AGE"), "AGE header must be present:\n{text}");
+        assert!(text.contains("3m"), "age value must be present:\n{text}");
+    }
+
+    #[test]
+    fn age_column_renders_red_when_stale() {
+        let mut rows = vec![row(1, "alpha", "merged")];
+        rows[0].last_active = Some(10_000 - 3600);
+        let app = flat_app(rows);
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_at(f, &app, 10_000)).unwrap();
+
+        let age_cell = first_row_age_cell(&terminal);
+        assert_eq!(
+            age_cell.symbol(),
+            "1",
+            "stale age (1h0m) should start with '1'"
+        );
+        assert_eq!(
+            age_cell.style().fg,
+            Some(Color::Red),
+            "stale age should be red"
+        );
+    }
+
+    #[test]
+    fn age_column_renders_uncolored_when_fresh() {
+        let mut rows = vec![row(1, "alpha", "merged")];
+        rows[0].last_active = Some(1000 - 180);
+        let app = flat_app(rows);
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_at(f, &app, 1000)).unwrap();
+
+        let age_cell = first_row_age_cell(&terminal);
+        assert_eq!(
+            age_cell.symbol(),
+            "3",
+            "fresh age (3m) should start with '3'"
+        );
+        assert_ne!(
+            age_cell.style().fg,
+            Some(Color::Red),
+            "fresh age should not be red"
         );
     }
 }

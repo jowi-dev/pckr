@@ -56,11 +56,12 @@ fn main() -> ExitCode {
 fn cmd_list(tmux: &Tmux, args: &[String]) -> ExitCode {
     model::run_refresh_hook(tmux);
     let rows = model::build_rows(tmux);
+    let now = model::now_epoch();
     let plain = args.iter().any(|a| a == "--plain");
     if plain {
-        println!("{}", render::to_plain_tsv(&rows));
+        println!("{}", render::to_plain_tsv(&rows, now));
     } else {
-        println!("{}", render::to_table(&rows));
+        println!("{}", render::to_table(&rows, now));
     }
     ExitCode::from(0)
 }

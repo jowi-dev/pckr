@@ -1,4 +1,4 @@
-//! Session row model: turns raw tmux + git data into the 10-field row shape
+//! Session row model: turns raw tmux + git data into the 11-field row shape
 //! described in docs/parity.md.
 
 use std::collections::HashMap;
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::gitinfo::{self, MergeState};
 use crate::tmux::Tmux;
@@ -15,10 +15,12 @@ use crate::tmux::Tmux;
 /// One row of the session list. Field order mirrors the table columns; the
 /// `--plain` TSV in docs/parity.md uses the same order except `runner`,
 /// which is appended last (field 10) so positional consumers are unaffected,
-/// and the display-only `phase` (from `@picker_phase`) and `pr` (the
-/// `@picker_pr` value verbatim), which `--plain` omits.
+/// the age of `last_active`, appended after it (field 11), and the
+/// display-only `phase` (from `@picker_phase`) and `pr` (the `@picker_pr`
+/// value verbatim), which `--plain` omits.
 /// `name` doubles as both the machine key (field 1) and the display copy
-/// (field 4).
+/// (field 4). `last_active` is the parsed @picker_last_active epoch; None
+/// when unset or unparseable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRow {
     pub name: String,
@@ -32,8 +34,9 @@ pub struct SessionRow {
     pub project: String,
     pub branch: String,
     pub status: String,
-    /// `@picker_pr` value verbatim; empty when unset. Rendered only, not part of the 9-field TSV.
+    /// `@picker_pr` value verbatim; empty when unset. Rendered only, not part of the `--plain` TSV.
     pub pr: String,
+    pub last_active: Option<u64>,
 }
 
 /// `@picker_status` and `@picker_server` concatenated with no separator;
@@ -62,6 +65,52 @@ pub fn phase_string(phase: &str) -> String {
     } else {
         phase.to_string()
     }
+}
+
+/// Ages strictly greater than this render in the stale style.
+pub const STALE_AFTER_SECS: u64 = 15 * 60;
+
+/// Formats seconds into age string; whole minutes, truncating.
+/// Under one hour: `"{m}m"`; one hour or more: `"{h}h{m}m"` (minutes 0-59, no zero-padding).
+pub fn format_age(secs: u64) -> String {
+    let minutes = secs / 60;
+    let hours = minutes / 60;
+
+    if hours == 0 {
+        format!("{minutes}m")
+    } else {
+        let remainder = minutes % 60;
+        format!("{hours}h{remainder}m")
+    }
+}
+
+/// Returns `""` for None, else formats the age from epoch to now.
+pub fn age_cell(last_active: Option<u64>, now: u64) -> String {
+    match last_active {
+        None => "".to_string(),
+        Some(epoch) => format_age(now.saturating_sub(epoch)),
+    }
+}
+
+/// True only when Some and age is strictly greater than `STALE_AFTER_SECS`.
+pub fn is_stale(last_active: Option<u64>, now: u64) -> bool {
+    match last_active {
+        None => false,
+        Some(epoch) => now.saturating_sub(epoch) > STALE_AFTER_SECS,
+    }
+}
+
+/// Trims and parses as u64. Returns None on failure.
+pub fn parse_epoch(raw: &str) -> Option<u64> {
+    raw.trim().parse::<u64>().ok()
+}
+
+/// Current Unix time in seconds. Returns 0 if the clock is before the epoch.
+pub fn now_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Builds the full row list from the current tmux session list, resolving
@@ -124,6 +173,7 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 branch,
                 status,
                 pr: s.picker_pr,
+                last_active: parse_epoch(&s.picker_last_active),
             }
         })
         .collect()
@@ -616,5 +666,71 @@ mod tests {
         assert_eq!(phase_string("started"), "started");
         assert_eq!(phase_string("working"), "working");
         assert_eq!(phase_string("review"), "review");
+    }
+
+    #[test]
+    fn format_age_minutes_under_hour() {
+        assert_eq!(format_age(0), "0m");
+        assert_eq!(format_age(59), "0m");
+        assert_eq!(format_age(180), "3m");
+        assert_eq!(format_age(3599), "59m");
+    }
+
+    #[test]
+    fn format_age_hours_and_minutes() {
+        assert_eq!(format_age(3600), "1h0m");
+        assert_eq!(format_age(4320), "1h12m");
+        assert_eq!(format_age(90000), "25h0m");
+    }
+
+    #[test]
+    fn age_cell_none_renders_empty() {
+        assert_eq!(age_cell(None, 1_000), "");
+    }
+
+    #[test]
+    fn age_cell_computes_from_epoch() {
+        assert_eq!(age_cell(Some(1_000 - 180), 1_000), "3m");
+    }
+
+    #[test]
+    fn age_cell_clamps_future_epoch() {
+        assert_eq!(age_cell(Some(2_000), 1_000), "0m");
+    }
+
+    #[test]
+    fn is_stale_none_is_not_stale() {
+        assert!(!is_stale(None, 10_000));
+    }
+
+    #[test]
+    fn is_stale_at_threshold_is_not_stale() {
+        assert!(!is_stale(Some(10_000 - STALE_AFTER_SECS), 10_000));
+    }
+
+    #[test]
+    fn is_stale_past_threshold_is_stale() {
+        assert!(is_stale(Some(10_000 - STALE_AFTER_SECS - 1), 10_000));
+    }
+
+    #[test]
+    fn is_stale_future_epoch_is_not_stale() {
+        assert!(!is_stale(Some(20_000), 10_000));
+    }
+
+    #[test]
+    fn parse_epoch_empty_is_none() {
+        assert_eq!(parse_epoch(""), None);
+    }
+
+    #[test]
+    fn parse_epoch_invalid_is_none() {
+        assert_eq!(parse_epoch("abc"), None);
+        assert_eq!(parse_epoch("-5"), None);
+    }
+
+    #[test]
+    fn parse_epoch_parses_valid_with_whitespace() {
+        assert_eq!(parse_epoch(" 1700000000 "), Some(1_700_000_000));
     }
 }

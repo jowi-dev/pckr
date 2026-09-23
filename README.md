@@ -115,6 +115,12 @@ view only.
 pckr renders the per-session tmux user options `@picker_status` and
 `@picker_server` in the ATTN column, concatenated with no separator; any
 tool may set them with `tmux set-option -t <session> @picker_status "❓"`.
+The `@picker_last_active` option (Unix epoch seconds of the agent's last
+activity, e.g. `tmux set-option -t <session> @picker_last_active "$(date +%s)"`)
+is rendered as the AGE column showing minutes since activity (e.g. `3m`, `1h12m`);
+ages strictly older than 15 minutes (`STALE_AFTER_SECS` in src/model.rs) render
+in red. When unset or not a valid non-negative integer, the AGE cell is blank.
+The writer (e.g. `tm runs event` or a hook) is outside pckr.
 pckr also runs the global `@picker_refresh_cmd` (via `sh -c`) before each
 list build, initial and every refresh. These option names and semantics are
 a frozen public contract other tools can depend on.

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
@@ -736,6 +736,64 @@ fn pr_column_renders_picker_pr_in_flat_and_drilled_views() {
     );
 
     // Quit with 'q'
+    server.send_key("pckr-host", "q");
+}
+
+// --- (b2) AGE column ------
+
+#[test]
+fn age_column_renders_minutes_since_picker_last_active() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("age");
+
+    let dir_a = fresh_dir("age-a");
+    let dir_b = fresh_dir("age-b");
+    let dir_host = fresh_dir("age-host");
+
+    server.new_session("session-a", &dir_a, &["sh"]);
+    server.new_session("session-b", &dir_b, &["sh"]);
+
+    // Set @picker_last_active on session-a to 180 seconds ago (3 minutes).
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time went backwards")
+        .as_secs();
+    let last_active = now.saturating_sub(180);
+    server.set_option("session-a", "@picker_last_active", &last_active.to_string());
+    // Leave session-b's @picker_last_active unset.
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("session-b") && t.contains("AGE"),
+    );
+
+    // Find the line with session-a and check it contains 3m or 4m.
+    let session_a_line = text
+        .lines()
+        .find(|l| l.contains("session-a"))
+        .expect("session-a line must be rendered");
+    assert!(
+        session_a_line.contains("3m") || session_a_line.contains("4m"),
+        "session-a line must show age as 3m or 4m; line: {session_a_line}"
+    );
+
+    // Find the line with session-b and check it does NOT contain 3m or 4m.
+    let session_b_line = text
+        .lines()
+        .find(|l| l.contains("session-b"))
+        .expect("session-b line must be rendered");
+    assert!(
+        !session_b_line.contains("3m") && !session_b_line.contains("4m"),
+        "session-b line must not show 3m or 4m (age is unset); line: {session_b_line}"
+    );
+
     server.send_key("pckr-host", "q");
 }
 
