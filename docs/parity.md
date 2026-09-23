@@ -11,7 +11,7 @@ devtools cutover PR deletes the script once every item here holds.
 `tmux display-popup -E`). Subcommands (all also used by tests):
 
 - `pckr list [--plain]` — print the session table. `--plain` prints the raw
-  9-field TSV; without it, print the padded, colored table (header first).
+  10-field TSV; without it, print the padded, colored table (header first).
 - `pckr branch-status <path>` — print `<branch> [merged|unmerged]`,
   `[detached]`, or nothing; always exit 0.
 - `pckr project-name <path>` — print parent-repo basename or `-`; exit 0.
@@ -27,7 +27,7 @@ by falling through to the interactive UI; do not reproduce that bug).
 
 ## Session list
 
-Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}'`.
+Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}'`.
 
 Row fields (TSV order for `--plain`, one row per session):
 1. `name` — machine key, never displayed.
@@ -40,8 +40,9 @@ Row fields (TSV order for `--plain`, one row per session):
 7. `project` — see project-name; `-` on failure.
 8. `branch` — from branch-status; `-` if none.
 9. `status` — `merged` / `unmerged` / `detached` / `-`.
+10. `runner` — `@picker_runner` value verbatim; `-` if empty (appended last so existing positional consumers are unaffected).
 
-Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `WT`,
+Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `RUNNER`, `WT`,
 `PROJECT`, `BRANCH`, `STATUS`; columns padded to max plain-text width
 (`#` right-justified, rest left), two spaces between columns. Colors:
 `status` green when `merged`, yellow when `unmerged`/`detached`; `branch`

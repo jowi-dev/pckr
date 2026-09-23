@@ -108,8 +108,8 @@ pub fn subsequence_match(haystack: &str, needle: &str) -> bool {
 /// Concatenation of a row's visible cells used as the filter haystack.
 fn row_haystack(row: &SessionRow) -> String {
     format!(
-        "{}{}{}{}{}{}",
-        row.display_name, row.attn, row.wt, row.project, row.branch, row.status
+        "{}{}{}{}{}{}{}",
+        row.display_name, row.attn, row.runner, row.wt, row.project, row.branch, row.status
     )
 }
 
@@ -533,6 +533,7 @@ mod tests {
             marker: '-',
             display_name: name.to_string(),
             attn: "-".to_string(),
+            runner: "-".to_string(),
             wt: "-".to_string(),
             project: "-".to_string(),
             branch: "-".to_string(),
@@ -551,6 +552,7 @@ mod tests {
             marker: '-',
             display_name: name.to_string(),
             attn: attn.to_string(),
+            runner: "-".to_string(),
             wt: "-".to_string(),
             project: project.to_string(),
             branch: "-".to_string(),
@@ -583,6 +585,19 @@ mod tests {
             .map(|r| r.name.as_str())
             .collect();
         assert_eq!(names, vec!["alpha"]);
+    }
+
+    #[test]
+    fn filter_matches_runner_token() {
+        let mut row1 = row_with("aa", "bb", "-", "-");
+        row1.runner = "opencode".to_string();
+        let row2 = row_with("cc", "dd", "-", "-");
+
+        let mut app = App::new(vec![row1, row2]);
+        app.filter = "opencode".to_string();
+        let filtered = app.filtered_rows();
+        let names: Vec<&str> = filtered.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["aa"]);
     }
 
     // --- mode transitions ---

@@ -7,16 +7,16 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const DIM: &str = "\x1b[2m";
 
-pub(crate) const HEADERS: [&str; 8] = [
-    "#", " ", "SESSION", "ATTN", "WT", "PROJECT", "BRANCH", "STATUS",
+pub(crate) const HEADERS: [&str; 9] = [
+    "#", " ", "SESSION", "ATTN", "RUNNER", "WT", "PROJECT", "BRANCH", "STATUS",
 ];
 
-/// Raw 9-field `\t`-delimited rows, one per line, no header.
+/// Raw 10-field `\t`-delimited rows, one per line, no header.
 pub fn to_plain_tsv(rows: &[SessionRow]) -> String {
     rows.iter()
         .map(|r| {
             format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 r.name,
                 r.idx,
                 r.marker,
@@ -25,25 +25,27 @@ pub fn to_plain_tsv(rows: &[SessionRow]) -> String {
                 r.wt,
                 r.project,
                 r.branch,
-                r.status
+                r.status,
+                r.runner
             )
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// Column widths for the 8 displayed table columns (`#`, marker, SESSION,
-/// ATTN, WT, PROJECT, BRANCH, STATUS), computed from plain (uncolored) text
+/// Column widths for the 9 displayed table columns (`#`, marker, SESSION,
+/// ATTN, RUNNER, WT, PROJECT, BRANCH, STATUS), computed from plain (uncolored) text
 /// so ANSI escapes never affect alignment. Exposed for slice 2's TUI to
 /// reuse for its own layout.
-pub fn compute_column_widths(rows: &[SessionRow]) -> [usize; 8] {
-    let mut widths: [usize; 8] = HEADERS.map(|h| h.chars().count());
+pub fn compute_column_widths(rows: &[SessionRow]) -> [usize; 9] {
+    let mut widths: [usize; 9] = HEADERS.map(|h| h.chars().count());
     for r in rows {
         let cells = [
             r.idx.to_string(),
             r.marker.to_string(),
             r.display_name.clone(),
             r.attn.clone(),
+            r.runner.clone(),
             r.wt.clone(),
             r.project.clone(),
             r.branch.clone(),
@@ -85,6 +87,7 @@ pub fn to_table(rows: &[SessionRow]) -> String {
         justify_left(HEADERS[5], widths[5]),
         justify_left(HEADERS[6], widths[6]),
         justify_left(HEADERS[7], widths[7]),
+        justify_left(HEADERS[8], widths[8]),
     ];
     let mut lines = vec![header_cells.join("  ").trim_end().to_string()];
 
@@ -93,10 +96,11 @@ pub fn to_table(rows: &[SessionRow]) -> String {
         let marker_cell = justify_left(&r.marker.to_string(), widths[1]);
         let session_cell = justify_left(&r.display_name, widths[2]);
         let attn_cell = justify_left(&r.attn, widths[3]);
-        let wt_cell = justify_left(&r.wt, widths[4]);
-        let project_cell = justify_left(&r.project, widths[5]);
+        let runner_cell = justify_left(&r.runner, widths[4]);
+        let wt_cell = justify_left(&r.wt, widths[5]);
+        let project_cell = justify_left(&r.project, widths[6]);
 
-        let branch_pad = widths[6].saturating_sub(r.branch.chars().count());
+        let branch_pad = widths[7].saturating_sub(r.branch.chars().count());
         let branch_cell = format!("{DIM}{}{RESET}{}", r.branch, " ".repeat(branch_pad));
 
         let status_color = match r.status.as_str() {
@@ -104,10 +108,10 @@ pub fn to_table(rows: &[SessionRow]) -> String {
             "unmerged" | "detached" => Some(YELLOW),
             _ => None,
         };
-        let status_pad = widths[7].saturating_sub(r.status.chars().count());
+        let status_pad = widths[8].saturating_sub(r.status.chars().count());
         let status_cell = match status_color {
             Some(color) => format!("{color}{}{RESET}{}", r.status, " ".repeat(status_pad)),
-            None => justify_left(&r.status, widths[7]),
+            None => justify_left(&r.status, widths[8]),
         };
 
         let cells = [
@@ -115,6 +119,7 @@ pub fn to_table(rows: &[SessionRow]) -> String {
             marker_cell,
             session_cell,
             attn_cell,
+            runner_cell,
             wt_cell,
             project_cell,
             branch_cell,
@@ -136,6 +141,7 @@ mod tests {
         marker: char,
         name: &str,
         attn: &str,
+        runner: &str,
         wt: &str,
         project: &str,
         branch: &str,
@@ -147,6 +153,7 @@ mod tests {
             marker,
             display_name: name.to_string(),
             attn: attn.to_string(),
+            runner: runner.to_string(),
             wt: wt.to_string(),
             project: project.to_string(),
             branch: branch.to_string(),
@@ -155,70 +162,61 @@ mod tests {
     }
 
     #[test]
-    fn plain_tsv_has_nine_fields_and_no_header() {
-        let rows = vec![row(1, '*', "s", "-", "-", "p", "m", "-")];
+    fn plain_tsv_has_ten_fields_and_no_header() {
+        let rows = vec![row(1, '*', "s", "-", "-", "-", "p", "m", "-")];
         let out = to_plain_tsv(&rows);
-        assert_eq!(out, "s\t1\t*\ts\t-\t-\tp\tm\t-");
+        assert_eq!(out, "s\t1\t*\ts\t-\t-\tp\tm\t-\t-");
     }
 
     #[test]
     fn table_renders_padded_colored_header_and_rows() {
         let rows = vec![
-            row(1, '*', "s", "-", "-", "p", "m", "-"),
-            row(2, '-', "t", "-", "-", "q", "n", "merged"),
+            row(1, '*', "s", "-", "claude", "-", "p", "m", "-"),
+            row(2, '-', "t", "-", "-", "-", "q", "n", "merged"),
         ];
 
         let output = to_table(&rows);
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 3);
 
-        assert_eq!(lines[0], "#     SESSION  ATTN  WT  PROJECT  BRANCH  STATUS");
+        // Header with all columns including RUNNER
+        let expected_header = "#     SESSION  ATTN  RUNNER  WT  PROJECT  BRANCH  STATUS";
+        assert_eq!(lines[0], expected_header);
 
-        let mut expected_row_a = String::new();
-        expected_row_a.push_str("1  *  s");
-        expected_row_a.push_str(&" ".repeat(8));
-        expected_row_a.push('-');
-        expected_row_a.push_str(&" ".repeat(5));
-        expected_row_a.push('-');
-        expected_row_a.push_str(&" ".repeat(3));
-        expected_row_a.push('p');
-        expected_row_a.push_str(&" ".repeat(8));
-        expected_row_a.push_str(DIM);
-        expected_row_a.push('m');
-        expected_row_a.push_str(RESET);
-        expected_row_a.push_str(&" ".repeat(7));
-        expected_row_a.push('-');
-        assert_eq!(lines[1], expected_row_a);
+        // Row 1 with "claude" runner
+        let expected_row_1 =
+            format!("1  *  s        -     claude  -   p        {DIM}m{RESET}       -");
+        assert_eq!(lines[1], expected_row_1);
 
-        let mut expected_row_b = String::new();
-        expected_row_b.push_str("2  -  t");
-        expected_row_b.push_str(&" ".repeat(8));
-        expected_row_b.push('-');
-        expected_row_b.push_str(&" ".repeat(5));
-        expected_row_b.push('-');
-        expected_row_b.push_str(&" ".repeat(3));
-        expected_row_b.push('q');
-        expected_row_b.push_str(&" ".repeat(8));
-        expected_row_b.push_str(DIM);
-        expected_row_b.push('n');
-        expected_row_b.push_str(RESET);
-        expected_row_b.push_str(&" ".repeat(7));
-        expected_row_b.push_str(GREEN);
-        expected_row_b.push_str("merged");
-        expected_row_b.push_str(RESET);
-        assert_eq!(lines[2], expected_row_b);
+        // Row 2 with "merged" status
+        let expected_row_2 = format!(
+            "2  -  t        -     -       -   q        {DIM}n{RESET}       {GREEN}merged{RESET}"
+        );
+        assert_eq!(lines[2], expected_row_2);
     }
 
     #[test]
     fn status_unmerged_and_detached_are_yellow() {
-        let rows = vec![row(1, '-', "a", "-", "-", "p", "b", "unmerged")];
+        let rows = vec![row(1, '-', "a", "-", "-", "-", "p", "b", "unmerged")];
         let out = to_table(&rows);
         let line = out.lines().nth(1).unwrap();
         assert!(line.contains(&format!("{YELLOW}unmerged{RESET}")));
 
-        let rows2 = vec![row(1, '-', "a", "-", "-", "p", "b", "detached")];
+        let rows2 = vec![row(1, '-', "a", "-", "-", "-", "p", "b", "detached")];
         let out2 = to_table(&rows2);
         let line2 = out2.lines().nth(1).unwrap();
         assert!(line2.contains(&format!("{YELLOW}detached{RESET}")));
+    }
+
+    #[test]
+    fn runner_column_renders_value_in_table() {
+        let rows = vec![row(1, '-', "a", "-", "claude", "-", "p", "b", "-")];
+        let out = to_table(&rows);
+        let line = out.lines().nth(1).unwrap();
+        assert!(
+            line.contains("claude"),
+            "runner value should be rendered: {}",
+            line
+        );
     }
 }

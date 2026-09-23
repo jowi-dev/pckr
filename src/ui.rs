@@ -414,7 +414,7 @@ fn draw_drilled_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(data_lines).scroll((scroll, 0)), data_area);
 }
 
-fn header_line(widths: &[usize; 8]) -> Line<'static> {
+fn header_line(widths: &[usize; 9]) -> Line<'static> {
     let cells = [
         render::justify_right(render::HEADERS[0], widths[0]),
         render::justify_left(render::HEADERS[1], widths[1]),
@@ -424,11 +424,12 @@ fn header_line(widths: &[usize; 8]) -> Line<'static> {
         render::justify_left(render::HEADERS[5], widths[5]),
         render::justify_left(render::HEADERS[6], widths[6]),
         render::justify_left(render::HEADERS[7], widths[7]),
+        render::justify_left(render::HEADERS[8], widths[8]),
     ];
     Line::from(cells.join("  "))
 }
 
-fn data_line(row: &crate::model::SessionRow, widths: &[usize; 8], selected: bool) -> Line<'static> {
+fn data_line(row: &crate::model::SessionRow, widths: &[usize; 9], selected: bool) -> Line<'static> {
     let base_style = if selected {
         Style::default().add_modifier(Modifier::REVERSED)
     } else {
@@ -439,10 +440,11 @@ fn data_line(row: &crate::model::SessionRow, widths: &[usize; 8], selected: bool
     let marker_cell = render::justify_left(&row.marker.to_string(), widths[1]);
     let session_cell = render::justify_left(&row.display_name, widths[2]);
     let attn_cell = render::justify_left(&row.attn, widths[3]);
-    let wt_cell = render::justify_left(&row.wt, widths[4]);
-    let project_cell = render::justify_left(&row.project, widths[5]);
-    let branch_cell = render::justify_left(&row.branch, widths[6]);
-    let status_cell = render::justify_left(&row.status, widths[7]);
+    let runner_cell = render::justify_left(&row.runner, widths[4]);
+    let wt_cell = render::justify_left(&row.wt, widths[5]);
+    let project_cell = render::justify_left(&row.project, widths[6]);
+    let branch_cell = render::justify_left(&row.branch, widths[7]);
+    let status_cell = render::justify_left(&row.status, widths[8]);
 
     let branch_style = base_style.patch(Style::default().add_modifier(Modifier::DIM));
     let status_color = match row.status.as_str() {
@@ -463,6 +465,8 @@ fn data_line(row: &crate::model::SessionRow, widths: &[usize; 8], selected: bool
         Span::styled(session_cell, base_style),
         Span::raw("  "),
         Span::styled(attn_cell, base_style),
+        Span::raw("  "),
+        Span::styled(runner_cell, base_style),
         Span::raw("  "),
         Span::styled(wt_cell, base_style),
         Span::raw("  "),
@@ -489,6 +493,7 @@ mod tests {
             marker: '-',
             display_name: name.to_string(),
             attn: "-".to_string(),
+            runner: "-".to_string(),
             wt: "-".to_string(),
             project: "proj".to_string(),
             branch: "main".to_string(),
@@ -503,6 +508,7 @@ mod tests {
             marker: '-',
             display_name: name.to_string(),
             attn: attn.to_string(),
+            runner: "-".to_string(),
             wt: "-".to_string(),
             project: project.to_string(),
             branch: "main".to_string(),
@@ -539,11 +545,27 @@ mod tests {
         assert!(text.contains("[N] session >"));
         assert!(text.contains("SESSION"));
         assert!(text.contains("ATTN"));
+        assert!(text.contains("RUNNER"));
         assert!(text.contains("PROJECT"));
         assert!(text.contains("BRANCH"));
         assert!(text.contains("STATUS"));
         assert!(text.contains("alpha"));
         assert!(text.contains("beta"));
+    }
+
+    #[test]
+    fn flat_view_runner_column_renders_value() {
+        let mut row_with_runner = row(1, "sess-runner", "merged");
+        row_with_runner.runner = "opencode".to_string();
+        let app = App::new(vec![row_with_runner]);
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("RUNNER"), "header must contain RUNNER");
+        assert!(text.contains("opencode"), "runner value must render");
     }
 
     #[test]
@@ -762,6 +784,23 @@ mod tests {
             text.contains("SESSION"),
             "detail header must render:\n{text}"
         );
+    }
+
+    #[test]
+    fn drilled_view_runner_column_renders_value() {
+        let mut row_with_runner = row_with(1, "sess-aaa-1", "projx", "merged", "-");
+        row_with_runner.runner = "opencode".to_string();
+        let mut app = App::new(vec![row_with_runner]);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("RUNNER"), "header must contain RUNNER");
+        assert!(text.contains("opencode"), "runner value must render");
     }
 
     #[test]
