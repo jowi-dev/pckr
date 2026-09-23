@@ -91,11 +91,13 @@ pckr opens in a tiled, per-project view with the first tile selected.
 Pressing `t` switches to the flat session list; `t` again returns to tiles.
 Sessions are grouped into one tile per project, using the same PROJECT value
 shown in the flat list (resolved locally from git). Each tile shows a
-roll-up: session count, unmerged-branch count, the aggregated
-`@picker_status`/`@picker_server` attention flags (concatenated with no
-separator, or `-` when none set), and a ready count from `@picker_tile_cmd`
-(shown as `<value> ready`, or `- ready` if unset or unavailable). pckr
-itself never calls `tm`; the tiled view works fully without `tm` on `PATH`.
+roll-up: session count, unmerged-branch count, an active count (the number
+of the project's sessions whose `@picker_phase` is `working`), the
+aggregated `@picker_status`/`@picker_server` attention flags (concatenated
+with no separator, or `-` when none set), and a ready count from
+`@picker_tile_cmd` (shown as `<value> ready`, or `- ready` if unset or
+unavailable). pckr itself never calls `tm`; the tiled view works fully
+without `tm` on `PATH`.
 
 The tile grid stretches to fill the entire popup, with the column count
 determined by popup width and a floor of about 28 columns by 4 lines per
@@ -160,7 +162,10 @@ the drilled session list (`-` when unset; `pckr list --plain` omits it). Writers
 pckr only renders the value; it never validates or writes `@picker_phase`.
 The one thing it does with it: a `merged` STATUS is not painted green
 (safe to close) while any phase is set, because a freshly started branch
-with no commits is an ancestor of its base and reads as `merged`.
+with no commits is an ancestor of its base and reads as `merged`. The
+tiled view also counts each project's `working` sessions as its active
+count; pckr never ages out a `working` phase, so clearing it is the
+writer's job (for example `tm runs reap` or a hook).
 
 ## Kill confirmation
 

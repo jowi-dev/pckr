@@ -171,7 +171,8 @@ once in it (one `t` from launch), it opens in NORMAL mode and every
 guarantee in this document holds unchanged. The tiled view adds one optional
 global tmux option, `@picker_tile_cmd` (documented in the README), and no
 `tm` dependency; its kill path reuses the same classification and
-ConfirmKill flow described above.
+ConfirmKill flow described above. Tiles also roll up an active count from
+`@picker_phase` = `working` sessions per project.
 
 ## Environment
 
