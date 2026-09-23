@@ -31,10 +31,10 @@ const DRILLED_HELP: &str =
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 
-/// Fixed tile card size: width in columns, height in lines (2 border + 2
+/// Fixed tile card size: width in columns, height in lines (2 border + 3
 /// content lines).
 const TILE_WIDTH: u16 = 28;
-const TILE_HEIGHT: u16 = 4;
+const TILE_HEIGHT: u16 = 5;
 /// Minimum lines reserved for the detail session list below the tile grid.
 const MIN_DETAIL_HEIGHT: u16 = 6;
 
@@ -71,6 +71,15 @@ fn key_from_event(code: KeyCode) -> Option<Key> {
     }
 }
 
+/// Reloads rows and tile info from tmux: runs the refresh hook, builds rows,
+/// updates the app, and refreshes tile readiness values.
+fn reload(app: &mut App, tmux: &Tmux) {
+    model::run_refresh_hook(tmux);
+    let rows = model::build_rows(tmux);
+    app.set_rows(rows);
+    app.set_tile_info(model::build_tile_info(tmux));
+}
+
 /// Entry point: runs the interactive picker to completion. Never returns an
 /// `Err` for tmux-side failures (per parity.md, a failed switch is silent);
 /// only terminal setup I/O errors propagate.
@@ -78,6 +87,7 @@ pub fn run(tmux: &Tmux) -> io::Result<()> {
     model::run_refresh_hook(tmux);
     let rows = model::build_rows(tmux);
     let mut app = App::new(rows);
+    app.set_tile_info(model::build_tile_info(tmux));
 
     install_panic_hook();
     enable_raw_mode()?;
@@ -123,9 +133,7 @@ fn event_loop(
             Effect::Switch(name) => return Ok(Some(name)),
             Effect::Kill(name) => {
                 actions::kill_session(tmux, &name);
-                model::run_refresh_hook(tmux);
-                let rows = model::build_rows(tmux);
-                app.set_rows(rows);
+                reload(app, tmux);
             }
             Effect::RequestKill(name) => {
                 // The CURRENT session is a silent no-op, checked BEFORE
@@ -136,9 +144,7 @@ fn event_loop(
                 let classification = kill_safety::classify(&name);
                 if classification.tier == KillTier::Safe {
                     actions::kill_session(tmux, &name);
-                    model::run_refresh_hook(tmux);
-                    let rows = model::build_rows(tmux);
-                    app.set_rows(rows);
+                    reload(app, tmux);
                 } else {
                     app.arm_confirm_kill(name, classification.tier, classification.reason);
                 }
@@ -375,9 +381,10 @@ fn draw_tile_card(
         "{} sess  {} unmerged  {}",
         tile.session_count, tile.unmerged_count, tile.attn
     ));
+    let ready_line = Line::from(format!("{} ready", tile.ready));
 
     let block = Block::default().borders(Borders::ALL).style(card_style);
-    let paragraph = Paragraph::new(vec![title_line, rollup_line]).block(block);
+    let paragraph = Paragraph::new(vec![title_line, rollup_line, ready_line]).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -780,6 +787,33 @@ mod tests {
         assert!(
             text.contains("projx"),
             "tile grid should stay visible:\n{text}"
+        );
+    }
+
+    #[test]
+    fn tiles_view_with_tile_info_renders_ready_values() {
+        let rows = vec![
+            row_with(1, "a1", "projx", "unmerged", "-"),
+            row_with(2, "b1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        let mut info = std::collections::HashMap::new();
+        info.insert("projx".to_string(), "3".to_string());
+        app.set_tile_info(info);
+        app.handle_key(Key::Char('t'));
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("3 ready"),
+            "projx tile should show '3 ready':\n{text}"
+        );
+        assert!(
+            text.contains("- ready"),
+            "projy tile should show '- ready':\n{text}"
         );
     }
 }
