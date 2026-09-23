@@ -343,6 +343,20 @@ fn draw_tile_grid(
     }
 }
 
+/// Computes the style for a tile card based on selection and view focus.
+fn tile_card_style(selected: bool, view: View) -> Style {
+    if !selected {
+        return Style::default();
+    }
+    match view {
+        View::Tiles => Style::default()
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            .fg(Color::Yellow),
+        View::Drilled => Style::default().bg(Color::DarkGray).fg(Color::Yellow),
+        View::Flat => Style::default().fg(Color::Yellow),
+    }
+}
+
 fn draw_tile_card(
     frame: &mut Frame,
     area: Rect,
@@ -351,16 +365,7 @@ fn draw_tile_card(
     tile_idx: usize,
 ) {
     let selected = tile_idx == app.tile_selected();
-    let border_style = if selected {
-        let style = Style::default().fg(Color::Yellow);
-        if app.view() == View::Tiles {
-            style.add_modifier(Modifier::BOLD)
-        } else {
-            style
-        }
-    } else {
-        Style::default()
-    };
+    let card_style = tile_card_style(selected, app.view());
 
     let title_line = Line::from(Span::styled(
         tile.project.clone(),
@@ -371,9 +376,7 @@ fn draw_tile_card(
         tile.session_count, tile.unmerged_count, tile.attn
     ));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style);
+    let block = Block::default().borders(Borders::ALL).style(card_style);
     let paragraph = Paragraph::new(vec![title_line, rollup_line]).block(block);
     frame.render_widget(paragraph, area);
 }
@@ -638,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn tiles_view_marks_selected_tile() {
+    fn tiles_view_fills_selected_tile_with_reversed() {
         let rows = vec![
             row_with(1, "a1", "projx", "merged", "-"),
             row_with(2, "b1", "projy", "merged", "-"),
@@ -651,13 +654,75 @@ mod tests {
         terminal.draw(|f| draw(f, &app)).unwrap();
 
         let buffer = terminal.backend().buffer();
-        // Top-left border cell of the first (selected) tile card, which
-        // starts at the top of the middle chunk (row index 1).
-        let cell = &buffer[(0, 1)];
+        // Interior cell of first (selected) tile: one column in, two rows down from top-left.
+        // Tile grid starts at buffer row 1, card interior starts at row 2.
+        let interior_cell = &buffer[(1, 2)];
+        assert!(
+            interior_cell
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "selected tile interior should have REVERSED modifier in TILES view"
+        );
+        // Blank cell past the title text: the fill must cover the whole card.
+        let blank_cell = &buffer[(TILE_WIDTH - 2, 2)];
+        assert_eq!(blank_cell.symbol(), " ");
+        assert!(
+            blank_cell.style().add_modifier.contains(Modifier::REVERSED),
+            "fill should cover blank interior cells, not just text"
+        );
+
+        // Neighbor tile (next column) should not have REVERSED.
+        let neighbor_cell = &buffer[(TILE_WIDTH + 1, 2)];
+        assert!(
+            !neighbor_cell
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "unselected tile should not have REVERSED modifier"
+        );
+        assert!(
+            neighbor_cell.style().bg.is_none() || neighbor_cell.style().bg == Some(Color::Reset),
+            "unselected tile interior should have no bg set"
+        );
+    }
+
+    #[test]
+    fn drilled_view_dims_selected_tile_with_darkgray() {
+        let rows = vec![
+            row_with(1, "a1", "projx", "merged", "-"),
+            row_with(2, "b1", "projy", "merged", "-"),
+        ];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+        app.handle_key(Key::Enter); // Enter drilled view
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        // Interior cell of selected tile in drilled view.
+        let interior_cell = &buffer[(1, 2)];
         assert_eq!(
-            cell.style().fg,
-            Some(Color::Yellow),
-            "selected tile border should be yellow"
+            interior_cell.style().bg,
+            Some(Color::DarkGray),
+            "selected tile interior should have DarkGray bg in DRILLED view"
+        );
+        assert!(
+            !interior_cell
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "selected tile should not have REVERSED in DRILLED view"
+        );
+
+        // Neighbor tile should not have DarkGray bg.
+        let neighbor_cell = &buffer[(TILE_WIDTH + 1, 2)];
+        assert_ne!(
+            neighbor_cell.style().bg,
+            Some(Color::DarkGray),
+            "unselected tile should not have DarkGray bg"
         );
     }
 
