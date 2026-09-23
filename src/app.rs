@@ -84,6 +84,8 @@ pub struct App {
     tile_selected: usize,
     drill_selected: usize,
     tile_info: std::collections::HashMap<String, String>,
+    /// Free-text usage string shown under the help line; see `model::read_usage`.
+    usage: Option<String>,
 }
 
 /// Case-insensitive, non-contiguous subsequence match: every char of
@@ -137,6 +139,7 @@ impl App {
             tile_selected: 0,
             drill_selected: 0,
             tile_info: std::collections::HashMap::new(),
+            usage: None,
         }
     }
 
@@ -170,6 +173,16 @@ impl App {
 
     pub fn drill_selected(&self) -> usize {
         self.drill_selected
+    }
+
+    /// Free-text usage string shown under the help line; see `model::read_usage`.
+    pub fn usage(&self) -> Option<&str> {
+        self.usage.as_deref()
+    }
+
+    /// Sets the usage string to be displayed under the help line.
+    pub fn set_usage(&mut self, usage: Option<String>) {
+        self.usage = usage;
     }
 
     /// Groups ALL rows (not the filtered view) by project, in first-
@@ -1083,5 +1096,19 @@ mod tests {
         assert_eq!(tiles[0].ready, "3");
         assert_eq!(tiles[1].project, "proj-b");
         assert_eq!(tiles[1].ready, "-");
+    }
+
+    // --- usage ---
+
+    #[test]
+    fn set_usage_replaces_value() {
+        let mut app = App::new(rows(&["alpha"]));
+        assert_eq!(app.usage(), None);
+
+        app.set_usage(Some("claude 62%".into()));
+        assert_eq!(app.usage(), Some("claude 62%"));
+
+        app.set_usage(None);
+        assert_eq!(app.usage(), None);
     }
 }

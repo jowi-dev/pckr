@@ -167,6 +167,14 @@ tiled view also counts each project's `working` sessions as its active
 count; pckr never ages out a `working` phase, so clearing it is the
 writer's job (for example `tm runs reap` or a hook).
 
+pckr also reads the global `@picker_usage` option at every list build, after
+`@picker_refresh_cmd` runs, and renders it as-is on its own line under the
+help line (flat and tiled views), for example
+`tmux set-option -g @picker_usage "claude 62% | opencode 3.1M tok"`. pckr
+never parses the value; the writer decides what it says. When the option is
+unset or empty, no line is shown. This option is part of the same public
+contract.
+
 ## Kill confirmation
 
 Pressing `x` shells out to `tm runs kill-safety <session>` (from

@@ -612,6 +612,69 @@ fn working_phase_shows_in_row_and_rolls_up_to_tile_active_count() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn usage_header_renders_picker_usage_and_rereads_on_refresh() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("usage");
+
+    let stub_dir = stub_tm_dir(
+        "usage-safe-stub",
+        "echo safe\necho classified as safe by stub\nexit 0",
+    );
+
+    let dir_session = fresh_dir("usage-session");
+    let dir_host = fresh_dir("usage-host");
+
+    // Create session-a and set the global usage option before starting pckr-host.
+    server.new_session("session-a", &dir_session, &["sh"]);
+    server.tmux_ok(&["set-option", "-g", "@picker_usage", "claude 62%"]);
+
+    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("claude 62%"),
+    );
+
+    assert!(
+        text.contains("session-a"),
+        "session-a must be rendered:\n{text}"
+    );
+    assert!(
+        text.contains("claude 62%"),
+        "@picker_usage must be rendered:\n{text}"
+    );
+
+    // Update the usage option, then kill session-a (safe tier) to force a
+    // refresh. Sessions list alphabetically, so pckr-host is row 0 and
+    // session-a row 1.
+    server.tmux_ok(&["set-option", "-g", "@picker_usage", "claude 40%"]);
+    server.send_literal("pckr-host", "j");
+    server.send_literal("pckr-host", "x");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("claude 40%") && !t.contains("session-a"),
+    );
+
+    assert!(
+        !text.contains("session-a"),
+        "session-a must be gone after kill:\n{text}"
+    );
+    assert!(
+        text.contains("claude 40%"),
+        "@picker_usage must update to new value after refresh:\n{text}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
 // --- (c) modal safety -----------------------------------------------------
 
 #[test]
