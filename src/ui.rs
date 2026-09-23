@@ -31,10 +31,10 @@ const DRILLED_HELP: &str =
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 
-/// Fixed tile card size: width in columns, height in lines (2 border + 3
+/// Fixed tile card size: width in columns, height in lines (2 border + 4
 /// content lines).
 const TILE_WIDTH: u16 = 28;
-const TILE_HEIGHT: u16 = 5;
+const TILE_HEIGHT: u16 = 6;
 /// Minimum lines reserved for the detail session list below the tile grid.
 const MIN_DETAIL_HEIGHT: u16 = 6;
 
@@ -383,8 +383,24 @@ fn draw_tile_card(
     ));
     let ready_line = Line::from(format!("{} ready", tile.ready));
 
-    let block = Block::default().borders(Borders::ALL).style(card_style);
-    let paragraph = Paragraph::new(vec![title_line, rollup_line, ready_line]).block(block);
+    let review_line = {
+        let review_text = format!("{} review", tile.review_count);
+        let review_style = if tile.review_count > 0 {
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Line::from(Span::styled(review_text, review_style))
+    };
+
+    let mut block = Block::default().borders(Borders::ALL).style(card_style);
+    if tile.review_count > 0 && !selected {
+        block = block.border_style(Style::default().fg(Color::Magenta));
+    }
+    let paragraph =
+        Paragraph::new(vec![title_line, rollup_line, ready_line, review_line]).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -868,6 +884,70 @@ mod tests {
         assert!(
             text.contains("- ready"),
             "projy tile should show '- ready':\n{text}"
+        );
+    }
+
+    /// Column/row of the first cell where `needle` starts, matching by cell
+    /// (not byte) so multi-byte border glyphs don't skew the column.
+    fn find_cell(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+        let chars: Vec<char> = needle.chars().collect();
+        let width = buffer.area.width;
+        (0..buffer.area.height).find_map(|y| {
+            (0..width.saturating_sub(chars.len() as u16 - 1)).find_map(|x| {
+                chars
+                    .iter()
+                    .enumerate()
+                    .all(|(i, c)| buffer[(x + i as u16, y)].symbol() == c.to_string())
+                    .then_some((x, y))
+            })
+        })
+    }
+
+    #[test]
+    fn tile_with_review_shows_count_and_magenta_border() {
+        let mut row_with_review = row_with(1, "a1", "projx", "merged", "-");
+        row_with_review.phase = "review".to_string();
+        let rows = vec![row_with_review, row_with(2, "b1", "projy", "merged", "-")];
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+        // Move to the second tile (projy) so projx (with review) is not selected.
+        app.handle_key(Key::Char('l'));
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("1 review"),
+            "review count must display for projx:\n{text}"
+        );
+        assert!(
+            text.contains("0 review"),
+            "review count must display for projy:\n{text}"
+        );
+
+        let buffer = terminal.backend().buffer();
+        let (rx, ry) = find_cell(buffer, "1 review").expect("'1 review' on screen");
+        assert_eq!(
+            buffer[(rx, ry)].fg,
+            Color::Magenta,
+            "projx's '1 review' must have magenta foreground"
+        );
+        let (tx, ty) = find_cell(buffer, "projx").expect("projx title on screen");
+        assert_ne!(
+            buffer[(tx, ty)].fg,
+            Color::Magenta,
+            "only the border is magenta, not the card text"
+        );
+
+        // Check that the border of the unselected projx tile (with review) is magenta.
+        // The tile starts at (0, 1) and has width 28, so top-left corner is at (0, 1).
+        let top_left_border = &buffer[(0, 1)];
+        assert_eq!(
+            top_left_border.fg,
+            Color::Magenta,
+            "unselected tile with review must have magenta border"
         );
     }
 
