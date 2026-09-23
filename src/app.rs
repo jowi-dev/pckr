@@ -69,6 +69,8 @@ pub enum Effect {
     Kill(String),
     /// Classify this session's kill-safety tier before killing it.
     RequestKill(String),
+    /// Open the pull request for this session's branch in the browser; the picker stays open.
+    OpenPr(String),
     /// Jump to the root session of the CURRENT session, then exit.
     JumpRoot,
     /// Quit without switching.
@@ -91,6 +93,8 @@ pub struct App {
     tile_info: std::collections::HashMap<String, TileFields>,
     /// Free-text usage string shown under the help line; see `model::read_usage`.
     usage: Option<String>,
+    /// One-line transient message shown on the prompt line; cleared by the next key press.
+    status_message: Option<String>,
 }
 
 /// Case-insensitive, non-contiguous subsequence match: every char of
@@ -146,6 +150,7 @@ impl App {
             drill_selected: 0,
             tile_info: std::collections::HashMap::new(),
             usage: None,
+            status_message: None,
         }
     }
 
@@ -189,6 +194,17 @@ impl App {
     /// Sets the usage string to be displayed under the help line.
     pub fn set_usage(&mut self, usage: Option<String>) {
         self.usage = usage;
+    }
+
+    /// Returns the current transient status message, if any.
+    pub fn status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
+    }
+
+    /// Sets a transient status message to be displayed on the prompt line;
+    /// it is automatically cleared by the next key press.
+    pub fn set_status_message(&mut self, msg: String) {
+        self.status_message = Some(msg);
     }
 
     /// Groups ALL rows (not the filtered view) by project, in first-
@@ -390,6 +406,7 @@ impl App {
     /// Handles one key event (already decoded to a portable `Key`) and
     /// returns the effect the caller should perform, if any.
     pub fn handle_key(&mut self, key: Key) -> Effect {
+        self.status_message = None;
         match self.mode {
             Mode::Normal => self.handle_normal_key(key),
             Mode::Insert => self.handle_insert_key(key),
@@ -426,6 +443,10 @@ impl App {
             },
             Key::Char('x') => match self.selected_name() {
                 Some(name) => Effect::RequestKill(name),
+                None => Effect::None,
+            },
+            Key::Char('o') => match self.selected_name() {
+                Some(name) => Effect::OpenPr(name),
                 None => Effect::None,
             },
             Key::Char('g') => Effect::JumpRoot,
@@ -489,6 +510,10 @@ impl App {
             },
             Key::Char('x') => match self.drilled_selected_name() {
                 Some(name) => Effect::RequestKill(name),
+                None => Effect::None,
+            },
+            Key::Char('o') => match self.drilled_selected_name() {
+                Some(name) => Effect::OpenPr(name),
                 None => Effect::None,
             },
             Key::Char('h') | Key::Left | Key::Esc => {
@@ -1160,5 +1185,65 @@ mod tests {
 
         app.set_usage(None);
         assert_eq!(app.usage(), None);
+    }
+
+    // --- open PR with 'o' ---
+
+    #[test]
+    fn o_in_normal_flat_requests_open_pr_of_selected() {
+        let mut app = flat_app(rows(&["alpha", "beta"]));
+        app.move_selection(1);
+        assert_eq!(app.selected(), 1);
+        let effect = app.handle_key(Key::Char('o'));
+        assert_eq!(effect, Effect::OpenPr("beta".to_string()));
+        assert_eq!(app.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn o_with_no_selection_is_noop() {
+        let mut app = flat_app(rows(&[]));
+        let effect = app.handle_key(Key::Char('o'));
+        assert_eq!(effect, Effect::None);
+    }
+
+    #[test]
+    fn o_in_insert_mode_edits_filter() {
+        let mut app = flat_app(rows(&["alpha"]));
+        app.handle_key(Key::Char('i'));
+        let effect = app.handle_key(Key::Char('o'));
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.filter(), "o");
+    }
+
+    #[test]
+    fn drilled_o_requests_open_pr_of_selected_session() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("a2", "proj-a", "merged", "-"),
+        ]);
+        app.handle_key(Key::Enter);
+        app.handle_key(Key::Char('j'));
+        assert_eq!(app.drill_selected(), 1);
+        let effect = app.handle_key(Key::Char('o'));
+        assert_eq!(effect, Effect::OpenPr("a2".to_string()));
+    }
+
+    #[test]
+    fn o_in_tiles_is_noop() {
+        let mut app = App::new(rows(&["alpha"]));
+        let effect = app.handle_key(Key::Char('o'));
+        assert_eq!(effect, Effect::None);
+        assert_eq!(app.view(), View::Tiles);
+    }
+
+    // --- status message ---
+
+    #[test]
+    fn status_message_is_cleared_by_next_key() {
+        let mut app = App::new(rows(&["alpha"]));
+        app.set_status_message("boom".to_string());
+        assert_eq!(app.status_message(), Some("boom"));
+        app.handle_key(Key::Char('j'));
+        assert!(app.status_message().is_none());
     }
 }

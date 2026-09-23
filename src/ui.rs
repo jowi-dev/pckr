@@ -22,13 +22,14 @@ use crate::actions;
 use crate::app::{App, Effect, Key, Mode, View};
 use crate::kill_safety::{self, KillTier};
 use crate::model;
+use crate::pr;
 use crate::render;
 use crate::tmux::Tmux;
 
-const NORMAL_HELP: &str = "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close";
+const NORMAL_HELP: &str = "NORMAL — enter:switch | x:kill | o:pr | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close";
 const TILES_HELP: &str = "TILES — h/l:project | enter:open | t:flat | g:root | q/esc:quit";
 const DRILLED_HELP: &str =
-    "SESSIONS — j/k:move | enter:switch | x:kill | h/esc:back | t:flat | q:quit";
+    "SESSIONS — j/k:move | enter:switch | x:kill | o:pr | h/esc:back | t:flat | q:quit";
 const INSERT_HELP: &str = "INSERT — type to filter | enter:switch | esc:normal mode";
 const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 
@@ -156,6 +157,14 @@ fn event_loop(
                     app.arm_confirm_kill(name, classification.tier, classification.reason);
                 }
             }
+            Effect::OpenPr(name) => match tmux.session_path(&name) {
+                None => app.set_status_message(format!("pr: no path for session '{name}'")),
+                Some(path) => {
+                    if let Err(msg) = pr::open(&path) {
+                        app.set_status_message(msg);
+                    }
+                }
+            },
             Effect::JumpRoot => {
                 actions::jump_root(tmux, None);
                 return Ok(None);
@@ -234,11 +243,17 @@ fn draw_prompt_line(frame: &mut Frame, area: Rect, app: &App) {
     let text = match app.mode() {
         Mode::ConfirmKill => confirm_kill_prompt(app),
         Mode::Insert => format!("[I] filter > {}", app.filter()),
-        Mode::Normal => match app.view() {
-            View::Flat => "[N] session > ".to_string(),
-            View::Tiles => "[T] project > ".to_string(),
-            View::Drilled => "[T] session > ".to_string(),
-        },
+        Mode::Normal => {
+            if let Some(msg) = app.status_message() {
+                msg.to_string()
+            } else {
+                match app.view() {
+                    View::Flat => "[N] session > ".to_string(),
+                    View::Tiles => "[T] project > ".to_string(),
+                    View::Drilled => "[T] session > ".to_string(),
+                }
+            }
+        }
     };
     frame.render_widget(Paragraph::new(text), area);
     if app.mode() == Mode::Insert {
@@ -713,7 +728,7 @@ mod tests {
 
         let text = buffer_text(&terminal);
         assert!(text.contains(
-            "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
+            "NORMAL — enter:switch | x:kill | o:pr | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
         ));
         assert!(text.contains("[N] session >"));
         assert!(text.contains("SESSION"));
@@ -1475,5 +1490,23 @@ mod tests {
 
         assert_eq!(phase_fg(blocked_row), Some(Color::Red));
         assert_ne!(phase_fg(started_row), Some(Color::Red));
+    }
+
+    #[test]
+    fn status_message_replaces_normal_mode_prompt() {
+        let rows = vec![row(1, "alpha", "merged")];
+        let mut app = App::new(rows);
+        app.set_status_message("pr: some error".to_string());
+
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("pr: some error"));
+        assert!(
+            !text.contains("[N] session >"),
+            "normal prompt should not render"
+        );
     }
 }

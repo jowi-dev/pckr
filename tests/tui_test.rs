@@ -239,16 +239,15 @@ fn pckr_argv(socket: &str) -> [String; 3] {
     ]
 }
 
-/// Writes a fresh, executable stub `tm` shell script (mode 0o755) into a new
+/// Writes a fresh, executable stub binary shell script (mode 0o755) into a new
 /// `fresh_dir` and returns that directory. The script body is `#!/bin/sh`
-/// followed verbatim by `script_body` (so it can print classification lines
-/// and/or `exit <n>`). Callers put this directory FIRST on `PATH` when
-/// launching the pckr pane (see `pckr_argv_with_tm_stub`) so the pckr
-/// process's `tm runs kill-safety <name>` subprocess call resolves to this
-/// stub rather than any real `tm` on the host.
-fn stub_tm_dir(label: &str, script_body: &str) -> PathBuf {
+/// followed verbatim by `script_body` (so it can print output and/or `exit <n>`).
+/// Callers put this directory FIRST on `PATH` when launching the pckr pane
+/// so the pckr process's subprocess calls resolve to this stub rather than
+/// any real binary on the host.
+fn stub_bin_dir(label: &str, bin_name: &str, script_body: &str) -> PathBuf {
     let dir = fresh_dir(label);
-    let script_path = dir.join("tm");
+    let script_path = dir.join(bin_name);
     std::fs::write(&script_path, format!("#!/bin/sh\n{script_body}\n")).unwrap();
     let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
@@ -256,11 +255,17 @@ fn stub_tm_dir(label: &str, script_body: &str) -> PathBuf {
     dir
 }
 
+/// Writes a fresh, executable stub `tm` shell script. See `stub_bin_dir`.
+fn stub_tm_dir(label: &str, script_body: &str) -> PathBuf {
+    stub_bin_dir(label, "tm", script_body)
+}
+
 /// Like `pckr_argv`, but prepends `stub_dir` to `PATH` so the pckr process
-/// (and anything it shells out to, e.g. `tm runs kill-safety`) sees the stub
-/// `tm` first. The current process's own `PATH` (which includes the nix dev
-/// shell's tmux/git) is preserved after it, via `env PATH=<stub>:<PATH> ...`.
-fn pckr_argv_with_tm_stub(socket: &str, stub_dir: &Path) -> [String; 3] {
+/// (and anything it shells out to, e.g. `tm runs kill-safety` or `gh`)
+/// sees stub binaries such as `tm` or `gh` first. The current process's own
+/// `PATH` (which includes the nix dev shell's tmux/git) is preserved after
+/// it, via `env PATH=<stub>:<PATH> ...`.
+fn pckr_argv_with_stub(socket: &str, stub_dir: &Path) -> [String; 3] {
     let current_path = std::env::var("PATH").unwrap_or_default();
     [
         "sh".to_string(),
@@ -346,7 +351,7 @@ fn list_rendering_shows_header_help_sessions_and_current_marker() {
     );
 
     assert!(text.contains(
-        "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
+        "NORMAL — enter:switch | x:kill | o:pr | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
     ));
     assert!(text.contains("SESSION"), "header must be rendered:\n{text}");
     assert!(text.contains("[N] session >"));
@@ -629,7 +634,7 @@ fn usage_header_renders_picker_usage_and_rereads_on_refresh() {
     server.new_session("session-a", &dir_session, &["sh"]);
     server.tmux_ok(&["set-option", "-g", "@picker_usage", "claude 62%"]);
 
-    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv = pckr_argv_with_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
@@ -967,7 +972,7 @@ fn kill_removes_session_worktree_directory_and_worktree_registration_when_tier_i
 
     let dir_host = fresh_dir("kill-host");
     server.new_session("wt-target", &worktree_dir, &["sh"]);
-    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv = pckr_argv_with_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
@@ -1055,7 +1060,7 @@ fn kill_prompts_and_respects_decline_then_confirm_when_tier_is_live_run() {
 
     let dir_host = fresh_dir("killliverun-host");
     server.new_session("wt-target", &worktree_dir, &["sh"]);
-    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv = pckr_argv_with_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
@@ -1160,7 +1165,7 @@ fn kill_prompts_with_root_session_label_and_escape_cancels() {
     let dir_host = fresh_dir("killroot-host");
 
     server.new_session("root-target", &dir_target, &["sh"]);
-    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv = pckr_argv_with_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
@@ -1219,7 +1224,7 @@ fn kill_defaults_to_unclassified_label_when_tm_fails() {
     let dir_host = fresh_dir("killunknown-host");
 
     server.new_session("unknown-target", &dir_target, &["sh"]);
-    let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
+    let argv = pckr_argv_with_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
@@ -1485,9 +1490,9 @@ fn tiled_view_drill_in_and_switch() {
         || server.capture_pane("zz-pckr-host"),
         |t| t.contains("SESSIONS —") && t.contains("sess-b1") && t.contains("tiles › proj-bbb"),
     );
-    assert!(
-        text.contains("SESSIONS — j/k:move | enter:switch | x:kill | h/esc:back | t:flat | q:quit")
-    );
+    assert!(text.contains(
+        "SESSIONS — j/k:move | enter:switch | x:kill | o:pr | h/esc:back | t:flat | q:quit"
+    ));
     assert!(text.contains("[T] session >"));
     assert!(
         !text.contains("sess-a1"),
@@ -1676,7 +1681,7 @@ fn launch_renders_tiles_and_t_toggles_flat() {
         |t| t.contains("NORMAL — enter:switch"),
     );
     assert!(text.contains(
-        "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
+        "NORMAL — enter:switch | x:kill | o:pr | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
     ));
 
     // t: flat -> tiles.
@@ -1729,7 +1734,144 @@ fn tiled_view_shows_spend_placeholder_without_spend_field() {
     );
 }
 
-// --- (f) jump-root as CLI ---------------------------------------------------
+// --- (f) PR open (gh dependency) -----------------------------------------------
+
+#[test]
+fn o_opens_pr_via_gh_in_session_path_and_picker_stays_open() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("pr-open");
+
+    let dir_host = fresh_dir("pr-open-host");
+    let dir_pr_target = fresh_dir("pr-open-target");
+    let logdir = fresh_dir("pr-open-logdir");
+    let logfile = logdir.join("gh.log");
+
+    let gh_stub_dir = stub_bin_dir(
+        "pr-open-gh-stub",
+        "gh",
+        &format!("echo \"$(pwd -P) $*\" >> '{}'\nexit 0", logfile.display()),
+    );
+
+    server.new_session("pr-target", &dir_pr_target, &["sh"]);
+    let argv = pckr_argv_with_stub(&server.socket, &gh_stub_dir);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("pr-target"),
+    );
+
+    server.send_literal("pckr-host", "i");
+    server.send_literal("pckr-host", "pr-target");
+    server.send_key("pckr-host", "Escape");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("[N] session >"),
+    );
+
+    server.send_literal("pckr-host", "o");
+
+    let contents = wait_for(
+        DEFAULT_TIMEOUT,
+        || std::fs::read_to_string(&logfile).unwrap_or_default(),
+        |c| !c.is_empty(),
+    );
+
+    let expected_dir =
+        std::fs::canonicalize(&dir_pr_target).expect("failed to canonicalize pr-target dir");
+    let trimmed = contents.trim();
+    let expected = format!("{} pr view --web", expected_dir.display());
+    assert_eq!(
+        trimmed, expected,
+        "gh must be called with 'pr view --web' in the session path"
+    );
+
+    let text = server.capture_pane("pckr-host");
+    assert!(
+        text.contains("[N] session >"),
+        "picker must stay open after o"
+    );
+    assert!(
+        server.session_names().contains(&"pckr-host".to_string()),
+        "pckr-host session must still exist"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
+#[test]
+fn o_shows_gh_failure_on_status_line_and_stays_open() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("pr-fail");
+
+    let gh_stub_dir = stub_bin_dir(
+        "pr-fail-gh-stub",
+        "gh",
+        "echo 'no pull requests found for branch \"main\"' >&2\nexit 1",
+    );
+
+    let dir_host = fresh_dir("pr-fail-host");
+    let dir_pr_target = fresh_dir("pr-fail-target");
+
+    server.new_session("pr-target", &dir_pr_target, &["sh"]);
+    let argv = pckr_argv_with_stub(&server.socket, &gh_stub_dir);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("pr-target"),
+    );
+
+    server.send_literal("pckr-host", "i");
+    server.send_literal("pckr-host", "pr-target");
+    server.send_key("pckr-host", "Escape");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("[N] session >"),
+    );
+
+    server.send_literal("pckr-host", "o");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("pr: no pull requests found for branch"),
+    );
+    assert!(text.contains("pr: no pull requests found for branch \"main\""));
+
+    assert!(
+        server.session_names().contains(&"pckr-host".to_string()),
+        "pckr-host session must still exist"
+    );
+
+    server.send_literal("pckr-host", "j");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("[N] session >"),
+    );
+    assert!(
+        !text.contains("pr: no pull requests"),
+        "status message must be cleared by the next key press"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
+// --- (g) jump-root as CLI ---------------------------------------------------
 
 #[test]
 fn jump_root_and_root_session_cli_resolve_across_sessions() {
