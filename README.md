@@ -112,7 +112,9 @@ a frozen public contract other tools can depend on.
 The global `@picker_tile_cmd` option runs a shell command once per project
 at each list build. The command runs as `sh -c "$cmd" sh <project> <root>`,
 where `$1` is the project name and `$2` is the project root, with working
-directory set to the root. All projects' commands run concurrently with a
+directory set to the root. The same two values are exported as
+`PICKER_PROJECT` and `PICKER_ROOT`, so a script named directly as the
+command (which sees no positional arguments) still receives them. All projects' commands run concurrently with a
 one-second deadline; commands still running at the deadline are killed. pckr
 reads the first line of stdout (trimmed) and displays it on the tile as
 `<value> ready`. If the option is unset, the command exits non-zero, produces
