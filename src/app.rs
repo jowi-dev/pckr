@@ -46,6 +46,9 @@ pub struct ProjectTile {
     /// Concatenation (row order, no separator) of every row attn value that
     /// isn't the "-" placeholder; "-" when no session has attention flags.
     pub attn: String,
+    /// Value printed by `@picker_tile_cmd` for this project, or "-" when the
+    /// option is unset or the command produced nothing.
+    pub ready: String,
 }
 
 /// Side effect requested by a key event. `None` means "handled internally,
@@ -77,6 +80,7 @@ pub struct App {
     view: View,
     tile_selected: usize,
     drill_selected: usize,
+    tile_info: std::collections::HashMap<String, String>,
 }
 
 /// Case-insensitive, non-contiguous subsequence match: every char of
@@ -120,6 +124,7 @@ impl App {
             view: View::Flat,
             tile_selected: 0,
             drill_selected: 0,
+            tile_info: std::collections::HashMap::new(),
         }
     }
 
@@ -167,6 +172,7 @@ impl App {
                     session_count: 0,
                     unmerged_count: 0,
                     attn: String::new(),
+                    ready: String::new(),
                 });
                 tiles.len() - 1
             });
@@ -183,6 +189,11 @@ impl App {
             if tile.attn.is_empty() {
                 tile.attn = "-".to_string();
             }
+            tile.ready = self
+                .tile_info
+                .get(&tile.project)
+                .cloned()
+                .unwrap_or_else(|| "-".to_string());
         }
         tiles
     }
@@ -235,6 +246,11 @@ impl App {
                 self.view = View::Tiles;
             }
         }
+    }
+
+    /// Sets the tile info (project -> ready value) used to fill ProjectTile.ready.
+    pub fn set_tile_info(&mut self, info: std::collections::HashMap<String, String>) {
+        self.tile_info = info;
     }
 
     fn clamp_selection(&mut self) {
@@ -978,5 +994,33 @@ mod tests {
             assert_eq!(app.view(), View::Drilled);
             assert_eq!(app.drill_selected(), 0);
         }
+    }
+
+    #[test]
+    fn tiles_default_ready_to_dash_with_no_tile_info() {
+        let app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+        ]);
+        let tiles = app.tiles();
+        assert_eq!(tiles[0].ready, "-");
+        assert_eq!(tiles[1].ready, "-");
+    }
+
+    #[test]
+    fn set_tile_info_fills_ready_values() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+        ]);
+        let mut info = std::collections::HashMap::new();
+        info.insert("proj-a".to_string(), "3".to_string());
+        app.set_tile_info(info);
+
+        let tiles = app.tiles();
+        assert_eq!(tiles[0].project, "proj-a");
+        assert_eq!(tiles[0].ready, "3");
+        assert_eq!(tiles[1].project, "proj-b");
+        assert_eq!(tiles[1].ready, "-");
     }
 }
