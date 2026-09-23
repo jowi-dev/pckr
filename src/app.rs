@@ -46,6 +46,8 @@ pub struct ProjectTile {
     pub unmerged_count: usize,
     /// Rows whose phase is exactly "working".
     pub active_count: usize,
+    /// Rows whose phase is exactly "blocked".
+    pub blocked_count: usize,
     /// Concatenation (row order, no separator) of every row attn value that
     /// isn't the "-" placeholder; "-" when no session has attention flags.
     pub attn: String,
@@ -201,6 +203,7 @@ impl App {
                     session_count: 0,
                     unmerged_count: 0,
                     active_count: 0,
+                    blocked_count: 0,
                     attn: String::new(),
                     ready: String::new(),
                     spend: String::new(),
@@ -214,6 +217,9 @@ impl App {
             }
             if row.phase == "working" {
                 tile.active_count += 1;
+            }
+            if row.phase == "blocked" {
+                tile.blocked_count += 1;
             }
             if row.attn != "-" {
                 tile.attn.push_str(&row.attn);
@@ -890,6 +896,28 @@ mod tests {
         assert_eq!(tiles[0].active_count, 2);
         assert_eq!(tiles[1].project, "proj-b");
         assert_eq!(tiles[1].active_count, 0);
+    }
+
+    #[test]
+    fn tiles_count_blocked_phase_sessions() {
+        let mut a1 = row_with("a1", "proj-a", "-", "-");
+        a1.phase = "blocked".to_string();
+        let mut a2 = row_with("a2", "proj-a", "-", "-");
+        a2.phase = "working".to_string();
+        let mut a3 = row_with("a3", "proj-a", "-", "-");
+        a3.phase = "-".to_string();
+        let b1 = row_with("b1", "proj-b", "-", "-");
+
+        let app = App::new(vec![a1, a2, a3, b1]);
+        let tiles = app.tiles();
+        assert_eq!(tiles[0].project, "proj-a");
+        assert_eq!(tiles[0].blocked_count, 1);
+        assert_eq!(
+            tiles[0].active_count, 1,
+            "blocked row should NOT count as active"
+        );
+        assert_eq!(tiles[1].project, "proj-b");
+        assert_eq!(tiles[1].blocked_count, 0);
     }
 
     #[test]

@@ -432,10 +432,17 @@ fn draw_tile_card(
     let selected = tile_idx == app.tile_selected();
     let card_style = tile_card_style(selected);
 
-    let title_line = Line::from(Span::styled(
+    let mut title_spans = vec![Span::styled(
         tile.project.clone(),
         Style::default().add_modifier(Modifier::BOLD),
-    ));
+    )];
+    if tile.blocked_count > 0 {
+        title_spans.push(Span::styled(
+            format!("  [{} blocked]", tile.blocked_count),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let title_line = Line::from(title_spans);
     let rollup_line = Line::from(format!(
         "{} sess  {} unmerged  {} active  {}",
         tile.session_count, tile.unmerged_count, tile.active_count, tile.attn
@@ -1153,6 +1160,31 @@ mod tests {
         assert!(
             text.contains("0 active"),
             "projy tile should show '0 active':\n{text}"
+        );
+    }
+
+    #[test]
+    fn tiles_view_marks_blocked_projects() {
+        let mut a1 = row_with(1, "a1", "projx", "-", "-");
+        a1.phase = "blocked".to_string();
+        let a2 = row_with(2, "a2", "projx", "-", "-");
+        let b1 = row_with(3, "b1", "projy", "-", "-");
+
+        let app = App::new(vec![a1, a2, b1]);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("[1 blocked]"),
+            "projx tile should show '[1 blocked]':\n{text}"
+        );
+        assert_eq!(
+            text.matches("blocked").count(),
+            1,
+            "only the projx tile should carry a blocked marker:\n{text}"
         );
     }
 
