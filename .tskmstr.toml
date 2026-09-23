@@ -5,10 +5,10 @@ provider = "github"
 repo = "jowi-dev/pckr"
 
 [agent]
-runner = "opencode"
+runner = "claude"
 
 [work.lanes.pckr]
 repo = "."
 base_branch = "main"
 prompt_file = ".tskmstr/prompts/pckr-lane.md"
-model = "venice/z-ai-glm-5-3"
+model = "opus"
