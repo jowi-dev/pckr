@@ -527,6 +527,16 @@ mod tests {
         }
     }
 
+    /// Starts an `App` and toggles it into `View::Flat` via `t`, the way a
+    /// real session would after launching into `View::Tiles`. Use this for
+    /// tests that exercise flat-view-only rendering.
+    fn flat_app(rows: Vec<SessionRow>) -> App {
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+        assert_eq!(app.view(), View::Flat);
+        app
+    }
+
     fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let area = buffer.area;
@@ -543,7 +553,7 @@ mod tests {
     #[test]
     fn normal_mode_renders_help_prompt_and_header() {
         let rows = vec![row(1, "alpha", "merged"), row(2, "beta", "unmerged")];
-        let app = App::new(rows);
+        let app = flat_app(rows);
 
         let backend = TestBackend::new(120, 10);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -582,7 +592,7 @@ mod tests {
     #[test]
     fn insert_mode_renders_help_and_filter_prompt() {
         let rows = vec![row(1, "alpha", "merged")];
-        let mut app = App::new(rows);
+        let mut app = flat_app(rows);
         app.handle_key(Key::Char('i'));
         app.handle_key(Key::Char('a'));
         app.handle_key(Key::Char('l'));
@@ -599,7 +609,7 @@ mod tests {
     #[test]
     fn confirm_kill_mode_renders_help_and_prompt() {
         let rows = vec![row(1, "alpha", "unmerged")];
-        let mut app = App::new(rows);
+        let mut app = flat_app(rows);
         app.arm_confirm_kill(
             "alpha".to_string(),
             crate::kill_safety::KillTier::LiveRun,
@@ -618,7 +628,7 @@ mod tests {
     #[test]
     fn confirm_kill_mode_omits_trailing_space_when_reason_empty() {
         let rows = vec![row(1, "alpha", "unmerged")];
-        let mut app = App::new(rows);
+        let mut app = flat_app(rows);
         app.arm_confirm_kill(
             "alpha".to_string(),
             crate::kill_safety::KillTier::RootSession,
@@ -639,7 +649,7 @@ mod tests {
         let rows: Vec<SessionRow> = (0..30)
             .map(|i| row(i + 1, &format!("session-{i}"), "merged"))
             .collect();
-        let mut app = App::new(rows);
+        let mut app = flat_app(rows);
         for _ in 0..25 {
             app.handle_key(Key::Char('j'));
         }
@@ -664,8 +674,7 @@ mod tests {
             row_with(1, "a1", "projx", "unmerged", "-"),
             row_with(2, "b1", "projy", "merged", "-"),
         ];
-        let mut app = App::new(rows);
-        app.handle_key(Key::Char('t'));
+        let app = App::new(rows);
 
         let backend = TestBackend::new(120, 20);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -686,8 +695,7 @@ mod tests {
             row_with(1, "a1", "projx", "merged", "-"),
             row_with(2, "b1", "projy", "merged", "-"),
         ];
-        let mut app = App::new(rows);
-        app.handle_key(Key::Char('t'));
+        let app = App::new(rows);
 
         let backend = TestBackend::new(120, 20);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -734,7 +742,6 @@ mod tests {
             row_with(2, "b1", "projy", "merged", "-"),
         ];
         let mut app = App::new(rows);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter); // Enter drilled view
 
         let backend = TestBackend::new(120, 20);
@@ -773,7 +780,6 @@ mod tests {
             row_with(2, "sess-bbb-1", "projy", "merged", "-"),
         ];
         let mut app = App::new(rows);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
 
         let backend = TestBackend::new(120, 20);
@@ -818,7 +824,6 @@ mod tests {
     fn confirm_kill_prompt_renders_in_drilled_view() {
         let rows = vec![row_with(1, "sess-aaa-1", "projx", "unmerged", "-")];
         let mut app = App::new(rows);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
         app.arm_confirm_kill(
             "sess-aaa-1".to_string(),
@@ -850,7 +855,6 @@ mod tests {
         let mut info = std::collections::HashMap::new();
         info.insert("projx".to_string(), "3".to_string());
         app.set_tile_info(info);
-        app.handle_key(Key::Char('t'));
 
         let backend = TestBackend::new(120, 20);
         let mut terminal = Terminal::new(backend).unwrap();

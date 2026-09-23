@@ -127,7 +127,8 @@ client to that session and never aborts the caller.
 
 ## TUI behavior (modal)
 
-- NORMAL mode (initial): status line `[N] session >`; header/help line
+- NORMAL mode (flat view, one `t` from launch): status line
+  `[N] session >`; header/help line
   `NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close`.
   Keys: `j`/`k` (and arrows) move selection; `enter` switch to selected
   session and exit; `x` on the current session is a silent no-op (short-
@@ -163,13 +164,14 @@ client to that session and never aborts the caller.
 
 ### Tiled view (additive, outside parity scope)
 
-`t` in NORMAL mode toggles a tiled per-project view that did not exist in
-the bash picker; it is documented in the README, not here. The flat view
-above is the parity surface: launching pckr always starts in the flat NORMAL
-mode, and every guarantee in this document holds there unchanged. The tiled
-view adds one optional global tmux option, `@picker_tile_cmd` (documented in
-the README), and no `tm` dependency; its kill path reuses the same
-classification and ConfirmKill flow described above.
+pckr launches into a tiled per-project view that did not exist in the bash
+picker; it is documented in the README, not here. `t` toggles between the
+tiled view and the flat view. The flat view above is the parity surface:
+once in it (one `t` from launch), it opens in NORMAL mode and every
+guarantee in this document holds unchanged. The tiled view adds one optional
+global tmux option, `@picker_tile_cmd` (documented in the README), and no
+`tm` dependency; its kill path reuses the same classification and
+ConfirmKill flow described above.
 
 ## Environment
 

@@ -25,8 +25,9 @@ pub struct PendingKill {
     pub reason: String,
 }
 
-/// Which list layout the TUI is showing. `Flat` is the parity-contract
-/// default; `Tiles`/`Drilled` are the two focus states of the tiled view.
+/// Which list layout the TUI is showing. `App::new` starts in `Tiles`
+/// (tile 0 selected); `Flat` is the original parity-contract list layout,
+/// reachable at any time via `t`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Flat,
@@ -121,6 +122,8 @@ fn row_haystack(row: &SessionRow) -> String {
 }
 
 impl App {
+    /// Builds a new `App`, launching into `View::Tiles` with tile 0
+    /// selected. `t` toggles to `View::Flat` and back.
     pub fn new(rows: Vec<SessionRow>) -> Self {
         App {
             rows,
@@ -128,7 +131,7 @@ impl App {
             mode: Mode::Normal,
             selected: 0,
             pending_kill: None,
-            view: View::Flat,
+            view: View::Tiles,
             tile_selected: 0,
             drill_selected: 0,
             tile_info: std::collections::HashMap::new(),
@@ -553,6 +556,16 @@ mod tests {
         names.iter().map(|n| row(n)).collect()
     }
 
+    /// Starts an `App` and toggles it into `View::Flat` via `t`, the way a
+    /// real session would after launching into `View::Tiles`. Use this for
+    /// tests that exercise flat-view-only key handling.
+    fn flat_app(rows: Vec<SessionRow>) -> App {
+        let mut app = App::new(rows);
+        app.handle_key(Key::Char('t'));
+        assert_eq!(app.view(), View::Flat);
+        app
+    }
+
     fn row_with(name: &str, project: &str, status: &str, attn: &str) -> SessionRow {
         SessionRow {
             name: name.to_string(),
@@ -613,7 +626,7 @@ mod tests {
 
     #[test]
     fn i_enters_insert_mode() {
-        let mut app = App::new(rows(&["alpha"]));
+        let mut app = flat_app(rows(&["alpha"]));
         assert_eq!(app.mode(), Mode::Normal);
         app.handle_key(Key::Char('i'));
         assert_eq!(app.mode(), Mode::Insert);
@@ -621,7 +634,7 @@ mod tests {
 
     #[test]
     fn esc_in_insert_returns_to_normal_keeping_filter() {
-        let mut app = App::new(rows(&["alpha", "beta"]));
+        let mut app = flat_app(rows(&["alpha", "beta"]));
         app.handle_key(Key::Char('i'));
         app.handle_key(Key::Char('a'));
         app.handle_key(Key::Char('l'));
@@ -633,11 +646,11 @@ mod tests {
 
     #[test]
     fn q_quits_only_in_normal_mode() {
-        let mut app = App::new(rows(&["alpha"]));
+        let mut app = flat_app(rows(&["alpha"]));
         let effect = app.handle_key(Key::Char('q'));
         assert_eq!(effect, Effect::Quit);
 
-        let mut app2 = App::new(rows(&["alpha"]));
+        let mut app2 = flat_app(rows(&["alpha"]));
         app2.handle_key(Key::Char('i'));
         let effect2 = app2.handle_key(Key::Char('q'));
         assert_eq!(effect2, Effect::None);
@@ -670,7 +683,7 @@ mod tests {
     #[test]
     fn digit_jump_resolves_nth_filtered_row() {
         // "ap" is a subsequence of "apple" and "grape" but not "banana".
-        let mut app = App::new(rows(&["apple", "banana", "grape"]));
+        let mut app = flat_app(rows(&["apple", "banana", "grape"]));
         app.filter = "ap".to_string();
         let filtered_names: Vec<&str> = app
             .filtered_rows()
@@ -685,7 +698,7 @@ mod tests {
 
     #[test]
     fn digit_jump_is_noop_when_n_exceeds_match_count() {
-        let mut app = App::new(rows(&["alpha"]));
+        let mut app = flat_app(rows(&["alpha"]));
         let effect = app.handle_key(Key::Char('9'));
         assert_eq!(effect, Effect::None);
         assert_eq!(app.selected(), 0);
@@ -695,7 +708,7 @@ mod tests {
 
     #[test]
     fn x_in_insert_mode_edits_filter_instead_of_killing() {
-        let mut app = App::new(rows(&["alpha", "xray"]));
+        let mut app = flat_app(rows(&["alpha", "xray"]));
         app.handle_key(Key::Char('i'));
         let effect = app.handle_key(Key::Char('x'));
         assert_eq!(effect, Effect::None);
@@ -706,7 +719,7 @@ mod tests {
 
     #[test]
     fn enter_in_normal_switches_to_selected() {
-        let mut app = App::new(rows(&["alpha", "beta"]));
+        let mut app = flat_app(rows(&["alpha", "beta"]));
         app.move_selection(1);
         let effect = app.handle_key(Key::Enter);
         assert_eq!(effect, Effect::Switch("beta".to_string()));
@@ -714,14 +727,14 @@ mod tests {
 
     #[test]
     fn x_in_normal_requests_kill_of_selected() {
-        let mut app = App::new(rows(&["alpha", "beta"]));
+        let mut app = flat_app(rows(&["alpha", "beta"]));
         let effect = app.handle_key(Key::Char('x'));
         assert_eq!(effect, Effect::RequestKill("alpha".to_string()));
     }
 
     #[test]
     fn x_with_no_selection_is_noop() {
-        let mut app = App::new(rows(&[]));
+        let mut app = flat_app(rows(&[]));
         let effect = app.handle_key(Key::Char('x'));
         assert_eq!(effect, Effect::None);
     }
@@ -790,7 +803,7 @@ mod tests {
 
     #[test]
     fn movement_keys_clamp_at_bounds() {
-        let mut app = App::new(rows(&["alpha", "beta"]));
+        let mut app = flat_app(rows(&["alpha", "beta"]));
         app.handle_key(Key::Char('k'));
         assert_eq!(app.selected(), 0);
         app.handle_key(Key::Char('j'));
@@ -821,20 +834,27 @@ mod tests {
     }
 
     #[test]
-    fn t_in_normal_flat_enters_tiles_and_t_returns_to_flat() {
+    fn new_app_starts_in_tiles_with_first_tile_selected() {
+        let app = App::new(rows(&["alpha"]));
+        assert_eq!(app.view(), View::Tiles);
+        assert_eq!(app.tile_selected(), 0);
+    }
+
+    #[test]
+    fn t_from_launch_toggles_tiles_and_flat() {
         let mut app = App::new(rows(&["alpha"]));
-        assert_eq!(app.view(), View::Flat);
+        assert_eq!(app.view(), View::Tiles);
         let effect = app.handle_key(Key::Char('t'));
         assert_eq!(effect, Effect::None);
-        assert_eq!(app.view(), View::Tiles);
+        assert_eq!(app.view(), View::Flat);
         let effect2 = app.handle_key(Key::Char('t'));
         assert_eq!(effect2, Effect::None);
-        assert_eq!(app.view(), View::Flat);
+        assert_eq!(app.view(), View::Tiles);
     }
 
     #[test]
     fn t_in_insert_mode_edits_filter_not_view() {
-        let mut app = App::new(rows(&["alpha"]));
+        let mut app = flat_app(rows(&["alpha"]));
         app.handle_key(Key::Char('i'));
         let effect = app.handle_key(Key::Char('t'));
         assert_eq!(effect, Effect::None);
@@ -848,7 +868,6 @@ mod tests {
             row_with("a1", "proj-a", "merged", "-"),
             row_with("b1", "proj-b", "merged", "-"),
         ]);
-        app.handle_key(Key::Char('t'));
         assert_eq!(app.tile_selected(), 0);
 
         app.handle_key(Key::Char('h'));
@@ -874,7 +893,6 @@ mod tests {
             row_with("b1", "proj-b", "merged", "-"),
             row_with("a2", "proj-a", "merged", "-"),
         ]);
-        app.handle_key(Key::Char('t'));
         let effect = app.handle_key(Key::Enter);
         assert_eq!(effect, Effect::None);
         assert_eq!(app.view(), View::Drilled);
@@ -893,7 +911,6 @@ mod tests {
         let mut a2 = row_with("a2-name", "proj-a", "merged", "-");
         a2.display_name = "A2 Display".to_string();
         let mut app = App::new(vec![a1, a2]);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
         assert_eq!(app.view(), View::Drilled);
         assert_eq!(app.drill_selected(), 0);
@@ -917,7 +934,6 @@ mod tests {
             row_with("a1", "proj-a", "merged", "-"),
             row_with("a2", "proj-a", "merged", "-"),
         ]);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
         app.handle_key(Key::Char('j'));
         let effect = app.handle_key(Key::Char('x'));
@@ -928,7 +944,6 @@ mod tests {
     fn drilled_h_or_esc_returns_to_tiles_without_quitting() {
         for key in [Key::Char('h'), Key::Esc, Key::Left] {
             let mut app = App::new(vec![row_with("a1", "proj-a", "merged", "-")]);
-            app.handle_key(Key::Char('t'));
             app.handle_key(Key::Enter);
             assert_eq!(app.view(), View::Drilled);
             let effect = app.handle_key(key);
@@ -944,7 +959,6 @@ mod tests {
     #[test]
     fn esc_in_tiles_quits() {
         let mut app = App::new(rows(&["alpha"]));
-        app.handle_key(Key::Char('t'));
         let effect = app.handle_key(Key::Esc);
         assert_eq!(effect, Effect::Quit);
     }
@@ -952,7 +966,6 @@ mod tests {
     #[test]
     fn q_in_drilled_quits() {
         let mut app = App::new(vec![row_with("a1", "proj-a", "merged", "-")]);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
         let effect = app.handle_key(Key::Char('q'));
         assert_eq!(effect, Effect::Quit);
@@ -964,7 +977,6 @@ mod tests {
             row_with("a1", "proj-a", "merged", "-"),
             row_with("b1", "proj-b", "merged", "-"),
         ]);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
         assert_eq!(app.view(), View::Drilled);
 
@@ -976,7 +988,6 @@ mod tests {
     #[test]
     fn confirm_kill_flow_preserves_tiled_view() {
         let mut app = App::new(vec![row_with("a1", "proj-a", "merged", "-")]);
-        app.handle_key(Key::Char('t'));
         app.handle_key(Key::Enter);
         assert_eq!(app.view(), View::Drilled);
 
@@ -1000,7 +1011,6 @@ mod tests {
             row_with("a1", "proj-a", "merged", "-"),
             row_with("b1", "proj-b", "merged", "-"),
         ]);
-        app.handle_key(Key::Char('t'));
         for key in [Key::Char('1'), Key::Char('i')] {
             let effect = app.handle_key(key);
             assert_eq!(effect, Effect::None);

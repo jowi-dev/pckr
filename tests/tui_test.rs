@@ -210,6 +210,25 @@ fn wait_for(
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// pckr launches into the tiled view. Flat-view tests need the flat
+/// picker on screen before they can drive it, so this waits for the
+/// tiles help line to confirm launch landed on `View::Tiles`, sends the `t`
+/// toggle, then waits for the flat `NORMAL` help line to confirm the switch
+/// completed.
+fn enter_flat_view(server: &TestServer, target: &str) {
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane(target),
+        |t| t.contains("TILES —"),
+    );
+    server.send_literal(target, "t");
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane(target),
+        |t| t.contains("NORMAL — enter:switch"),
+    );
+}
+
 /// Shell argv that runs pckr inside a pane against `socket`, staying alive
 /// (pckr itself blocks in its event loop until quit/switch/kill-and-exit).
 fn pckr_argv(socket: &str) -> [String; 3] {
@@ -318,6 +337,8 @@ fn list_rendering_shows_header_help_sessions_and_current_marker() {
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
+    enter_flat_view(&server, "pckr-host");
+
     let text = wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("pckr-host"),
@@ -357,6 +378,8 @@ fn attn_column_renders_picker_status_and_picker_server() {
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
+    enter_flat_view(&server, "pckr-host");
+
     let text = wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("pckr-host"),
@@ -392,6 +415,8 @@ fn runner_column_renders_picker_runner() {
     let argv = pckr_argv(&server.socket);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
 
     let text = wait_for(
         DEFAULT_TIMEOUT,
@@ -458,6 +483,8 @@ fn phase_column_renders_picker_phase_in_flat_and_drilled_views() {
     let argv = pckr_argv(&server.socket);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
 
     let text = wait_for(
         DEFAULT_TIMEOUT,
@@ -534,6 +561,8 @@ fn insert_mode_edits_filter_and_never_kills_a_session() {
     let argv = pckr_argv(&server.socket);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
 
     wait_for(
         DEFAULT_TIMEOUT,
@@ -618,6 +647,8 @@ fn kill_removes_session_worktree_directory_and_worktree_registration_when_tier_i
     let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
 
     wait_for(
         DEFAULT_TIMEOUT,
@@ -704,6 +735,8 @@ fn kill_prompts_and_respects_decline_then_confirm_when_tier_is_live_run() {
     let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
 
     wait_for(
         DEFAULT_TIMEOUT,
@@ -808,6 +841,8 @@ fn kill_prompts_with_root_session_label_and_escape_cancels() {
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
+    enter_flat_view(&server, "pckr-host");
+
     wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("pckr-host"),
@@ -864,6 +899,8 @@ fn kill_defaults_to_unclassified_label_when_tm_fails() {
     let argv = pckr_argv_with_tm_stub(&server.socket, &stub_dir);
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    enter_flat_view(&server, "pckr-host");
 
     wait_for(
         DEFAULT_TIMEOUT,
@@ -1015,6 +1052,8 @@ fn digit_jump_switches_and_pckr_exits_cleanly() {
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("pckr-host", &dir_host, &argv_ref);
 
+    enter_flat_view(&server, "pckr-host");
+
     wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("pckr-host"),
@@ -1093,21 +1132,7 @@ fn tiled_view_drill_in_and_switch() {
     let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     server.new_session("zz-pckr-host", &dir_host, &argv_ref);
 
-    // Wait for the flat picker first.
-    wait_for(
-        DEFAULT_TIMEOUT,
-        || server.capture_pane("zz-pckr-host"),
-        |t| {
-            t.contains("sess-a1")
-                && t.contains("sess-a2")
-                && t.contains("sess-b1")
-                && t.contains("NORMAL — enter:switch")
-        },
-    );
-
-    // Switch to the tiled view.
-    server.send_literal("zz-pckr-host", "t");
-
+    // Launch lands directly on the tiled view.
     let text = wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("zz-pckr-host"),
@@ -1161,8 +1186,8 @@ fn tiled_view_drill_in_and_switch() {
 }
 
 /// Launches pckr over one git repo (`proj-aaa`, session `sess-a1`) with the
-/// global `@picker_tile_cmd` set to `tile_cmd` (left unset for `None`),
-/// presses `t`, and returns the server plus the rendered tiled pane.
+/// global `@picker_tile_cmd` set to `tile_cmd` (left unset for `None`) and
+/// returns the server plus the rendered tiled pane pckr launches into.
 fn launch_tiled_with_tile_cmd(label: &str, tile_cmd: Option<&str>) -> (TestServer, String) {
     let server = TestServer::new(label);
 
@@ -1186,14 +1211,8 @@ fn launch_tiled_with_tile_cmd(label: &str, tile_cmd: Option<&str>) -> (TestServe
         &argv_ref,
     );
 
-    // A hung tile command must not delay the first render past the timeout.
-    wait_for(
-        DEFAULT_TIMEOUT,
-        || server.capture_pane("zz-pckr-host"),
-        |t| t.contains("sess-a1") && t.contains("NORMAL — enter:switch"),
-    );
-
-    server.send_literal("zz-pckr-host", "t");
+    // Launch lands directly on the tiled view. A hung tile command must not
+    // delay the first render past the timeout.
     let text = wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("zz-pckr-host"),
@@ -1250,6 +1269,78 @@ fn tiled_view_ready_placeholder_when_tile_cmd_hangs() {
         || server.capture_pane("zz-pckr-host"),
         |t| t.contains("NORMAL — enter:switch"),
     );
+}
+
+#[test]
+fn launch_renders_tiles_and_t_toggles_flat() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("launchtiles");
+
+    // Two git repos with distinct, known basenames so the PROJECT column
+    // (basename of the git-common-dir parent) is deterministic.
+    let repos_parent = fresh_dir("launchtiles-repos");
+    let repo_a = repos_parent.join("proj-aaa");
+    std::fs::create_dir_all(&repo_a).unwrap();
+    git(&repo_a, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo_a.join("f.txt"), "a\n").unwrap();
+    git(&repo_a, &["add", "f.txt"]);
+    git_commit(&repo_a, "initial");
+
+    let repo_b = repos_parent.join("proj-bbb");
+    std::fs::create_dir_all(&repo_b).unwrap();
+    git(&repo_b, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo_b.join("f.txt"), "b\n").unwrap();
+    git(&repo_b, &["add", "f.txt"]);
+    git_commit(&repo_b, "initial");
+
+    let dir_host = fresh_dir("launchtiles-host");
+
+    server.new_session("sess-a1", &repo_a, &["sh"]);
+    server.new_session("sess-b1", &repo_b, &["sh"]);
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("zz-pckr-host", &dir_host, &argv_ref);
+
+    // Launch lands directly on the tiled view: both project tiles are
+    // visible, and none of the flat picker's own markers are on screen.
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("TILES —") && t.contains("proj-aaa") && t.contains("proj-bbb"),
+    );
+    assert!(text.contains("TILES —"), "tiles help line missing:\n{text}");
+    assert!(text.contains("proj-aaa"), "proj-aaa tile missing:\n{text}");
+    assert!(text.contains("proj-bbb"), "proj-bbb tile missing:\n{text}");
+    assert!(
+        !text.contains("[N] session >"),
+        "flat picker's prompt line must not render on launch:\n{text}"
+    );
+    assert!(
+        !text.contains("NORMAL —"),
+        "flat picker's NORMAL help line must not render on launch:\n{text}"
+    );
+
+    // t: tiles -> flat.
+    server.send_literal("zz-pckr-host", "t");
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("NORMAL — enter:switch"),
+    );
+    assert!(text.contains(
+        "NORMAL — enter:switch | x:kill | g:root | t:tiles | 1-9:jump | i:filter | q/esc:quit | [merged]=safe to close"
+    ));
+
+    // t: flat -> tiles.
+    server.send_literal("zz-pckr-host", "t");
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("TILES —"),
+    );
+    assert!(text.contains("TILES —"));
+
+    server.send_key("zz-pckr-host", "q");
 }
 
 // --- (f) jump-root as CLI ---------------------------------------------------

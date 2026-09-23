@@ -39,7 +39,10 @@ command in the tiled view (see Plugin contract below).
 
 ## Keys
 
-NORMAL mode:
+pckr launches into the tiled view (see [Tiled view](#tiled-view)); `t`
+switches to the flat list below and back.
+
+NORMAL mode (flat view):
 
 | Key | Action |
 |---|---|
@@ -49,7 +52,7 @@ NORMAL mode:
 | `g` | Jump to root session of the current session, exit |
 | `1`-`9` | Jump to and switch to the Nth visible row |
 | `i` | Enter INSERT (filter) mode |
-| `t` | Toggle tiled view |
+| `t` | Return to tiled view |
 | `q` / `esc` | Quit |
 
 INSERT mode:
@@ -67,7 +70,7 @@ Tiled view, TILES focus (tile grid):
 |---|---|
 | `h` / `l` / left/right arrows | Move across tiles |
 | `enter` / `j` | Open the selected project's session list |
-| `t` | Return to flat view |
+| `t` | Switch to flat view |
 | `g` | Jump to root session of the current session, exit |
 | `q` / `esc` | Quit |
 
@@ -79,20 +82,20 @@ Tiled view, SESSIONS focus (drilled session list):
 | `enter` | Switch to selected session, exit |
 | `x` | Kill selected session, same tiered confirmation as flat view |
 | `h` / `esc` | Back to tiles |
-| `t` | Return to flat view |
+| `t` | Switch to flat view |
 | `q` | Quit |
 
 ## Tiled view
 
-Pressing `t` in NORMAL mode switches from the flat session list to a tiled,
-per-project view; `t` again returns to flat. Sessions are grouped into one
-tile per project, using the same PROJECT value shown in the flat list
-(resolved locally from git). Each tile shows a roll-up: session count,
-unmerged-branch count, the aggregated `@picker_status`/`@picker_server`
-attention flags (concatenated with no separator, or `-` when none set), and
-a ready count from `@picker_tile_cmd` (shown as `<value> ready`, or `- ready`
-if unset or unavailable). pckr itself never calls `tm`; the tiled view
-works fully without `tm` on `PATH`.
+pckr opens in a tiled, per-project view with the first tile selected.
+Pressing `t` switches to the flat session list; `t` again returns to tiles.
+Sessions are grouped into one tile per project, using the same PROJECT value
+shown in the flat list (resolved locally from git). Each tile shows a
+roll-up: session count, unmerged-branch count, the aggregated
+`@picker_status`/`@picker_server` attention flags (concatenated with no
+separator, or `-` when none set), and a ready count from `@picker_tile_cmd`
+(shown as `<value> ready`, or `- ready` if unset or unavailable). pckr
+itself never calls `tm`; the tiled view works fully without `tm` on `PATH`.
 
 The layout is master-detail: the tile grid stays on top, and the selected
 tile's sessions are listed below once you drill in (`enter` or `j` from
