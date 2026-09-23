@@ -60,6 +60,15 @@ user option `@picker_refresh_cmd`; if non-empty, run it via `sh -c`,
 discarding output and errors. devtools sets it to invoke
 `phoenix-picker-server.sh detect`. pckr knows nothing about phoenix.
 
+### Usage line (plugin display contract — NEW, outside the bash picker)
+
+At every list build, AFTER the refresh hook runs, read the tmux GLOBAL user
+option `@picker_usage`. If non-empty, the TUI renders it verbatim on its own
+line directly under the help line, in every view, in a single style (cyan).
+pckr never parses, thresholds, or recolors the value; a writer script outside
+pckr computes it. When unset or empty, no line is added and the layout is unchanged.
+`pckr list` output is unaffected.
+
 ## branch-status logic (ported verbatim from bash)
 
 - Not a dir / not a git worktree → empty output, exit 0.
@@ -160,7 +169,7 @@ client to that session and never aborts the caller.
   filtered rows), matching the bash/fzf behavior.
 - Selection clamps into range after refresh/filter changes.
 - List refresh re-runs the refresh hook + full list build (matching fzf
-  `reload($SELF list)` behavior after kill).
+  `reload($SELF list)` behavior after kill), then re-reads `@picker_usage`.
 
 ### Tiled view (additive, outside parity scope)
 
