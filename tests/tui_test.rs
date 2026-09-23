@@ -989,6 +989,98 @@ fn tiled_view_drill_in_and_switch() {
     );
 }
 
+/// Launches pckr over one git repo (`proj-aaa`, session `sess-a1`) with the
+/// global `@picker_tile_cmd` set to `tile_cmd` (left unset for `None`),
+/// presses `t`, and returns the server plus the rendered tiled pane.
+fn launch_tiled_with_tile_cmd(label: &str, tile_cmd: Option<&str>) -> (TestServer, String) {
+    let server = TestServer::new(label);
+
+    let repo_a = fresh_dir(&format!("{label}-repos")).join("proj-aaa");
+    std::fs::create_dir_all(&repo_a).unwrap();
+    git(&repo_a, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo_a.join("f.txt"), "a\n").unwrap();
+    git(&repo_a, &["add", "f.txt"]);
+    git_commit(&repo_a, "initial");
+    server.new_session("sess-a1", &repo_a, &["sh"]);
+
+    if let Some(cmd) = tile_cmd {
+        server.tmux_ok(&["set-option", "-g", "@picker_tile_cmd", cmd]);
+    }
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session(
+        "zz-pckr-host",
+        &fresh_dir(&format!("{label}-host")),
+        &argv_ref,
+    );
+
+    // A hung tile command must not delay the first render past the timeout.
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("sess-a1") && t.contains("NORMAL — enter:switch"),
+    );
+
+    server.send_literal("zz-pckr-host", "t");
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("TILES —") && t.contains("proj-aaa"),
+    );
+    (server, text)
+}
+
+#[test]
+fn tiled_view_shows_ready_count_from_tile_cmd() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    // Named directly as the command, the script sees no positional args, so
+    // it reads the project from the environment.
+    let stub_dir = stub_tm_dir(
+        "tile-cmd-stub",
+        "[ \"$PICKER_PROJECT\" = proj-aaa ] && echo 3",
+    );
+    let stub = stub_dir.join("tm");
+    let (_server, text) =
+        launch_tiled_with_tile_cmd("tiled-ready-count", Some(stub.to_str().unwrap()));
+
+    assert!(
+        text.contains("3 ready"),
+        "tile must show the stub's ready count:\n{text}"
+    );
+}
+
+#[test]
+fn tiled_view_shows_ready_placeholder_without_tile_cmd() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (_server, text) = launch_tiled_with_tile_cmd("tiled-no-cmd", None);
+
+    assert!(
+        text.contains("- ready"),
+        "tile must show '- ready' when @picker_tile_cmd is unset:\n{text}"
+    );
+}
+
+#[test]
+fn tiled_view_ready_placeholder_when_tile_cmd_hangs() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    // Prints a value, then outlives the timeout: the value must be dropped.
+    let (server, text) = launch_tiled_with_tile_cmd("tiled-hang", Some("echo 3; sleep 30"));
+
+    assert!(
+        text.contains("- ready") && !text.contains("3 ready"),
+        "a timed-out tile command must leave '- ready':\n{text}"
+    );
+
+    // The picker stays responsive after the timeout.
+    server.send_literal("zz-pckr-host", "t");
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("NORMAL — enter:switch"),
+    );
+}
+
 // --- (f) jump-root as CLI ---------------------------------------------------
 
 #[test]
