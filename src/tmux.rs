@@ -14,6 +14,7 @@ pub struct SessionEntry {
     pub path: String,
     pub picker_status: String,
     pub picker_server: String,
+    pub picker_runner: String,
 }
 
 /// Wraps `std::process::Command` invocations of `tmux`, transparently
@@ -45,14 +46,14 @@ impl Tmux {
         cmd
     }
 
-    /// `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}'`
+    /// `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}'`
     pub fn list_sessions(&self) -> Vec<SessionEntry> {
         let output = self
             .command()
             .args([
                 "list-sessions",
                 "-F",
-                "#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}",
+                "#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}",
             ])
             .output();
 
@@ -64,16 +65,18 @@ impl Tmux {
         let text = String::from_utf8_lossy(&output.stdout);
         text.lines()
             .filter_map(|line| {
-                let mut parts = line.splitn(4, '|');
+                let mut parts = line.splitn(5, '|');
                 let name = parts.next()?.to_string();
                 let path = parts.next()?.to_string();
                 let picker_status = parts.next().unwrap_or("").to_string();
                 let picker_server = parts.next().unwrap_or("").to_string();
+                let picker_runner = parts.next().unwrap_or("").to_string();
                 Some(SessionEntry {
                     name,
                     path,
                     picker_status,
                     picker_server,
+                    picker_runner,
                 })
             })
             .collect()

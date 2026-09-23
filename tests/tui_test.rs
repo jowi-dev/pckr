@@ -349,6 +349,73 @@ fn attn_column_renders_picker_status_and_picker_server() {
     server.send_key("pckr-host", "q");
 }
 
+#[test]
+fn runner_column_renders_picker_runner() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let server = TestServer::new("runner");
+
+    let dir_a = fresh_dir("runner-a");
+    let dir_b = fresh_dir("runner-b");
+    let dir_host = fresh_dir("runner-host");
+
+    server.new_session("session-a", &dir_a, &["sh"]);
+    server.new_session("session-b", &dir_b, &["sh"]);
+    server.set_option("session-a", "@picker_runner", "claude");
+    server.set_option("session-b", "@picker_runner", "opencode");
+
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session("pckr-host", &dir_host, &argv_ref);
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("session-a") && t.contains("session-b"),
+    );
+
+    assert!(
+        text.contains("RUNNER"),
+        "RUNNER header must render:\n{text}"
+    );
+    assert!(
+        text.contains("claude"),
+        "@picker_runner claude must render:\n{text}"
+    );
+    assert!(
+        text.contains("opencode"),
+        "@picker_runner opencode must render:\n{text}"
+    );
+
+    // None of the dirs are git repos, so every session shares project `-`
+    // and lands in a single tile; drilling in lists all of them.
+    server.send_literal("pckr-host", "t");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("TILES —"),
+    );
+
+    server.send_key("pckr-host", "Enter");
+
+    let text = wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("pckr-host"),
+        |t| t.contains("SESSIONS —") && t.contains("session-a"),
+    );
+
+    assert!(
+        text.contains("RUNNER"),
+        "RUNNER header must render in drilled view:\n{text}"
+    );
+    assert!(
+        text.contains("claude") && text.contains("opencode"),
+        "runner tokens must render in drilled view:\n{text}"
+    );
+
+    server.send_key("pckr-host", "q");
+}
+
 // --- (c) modal safety -----------------------------------------------------
 
 #[test]

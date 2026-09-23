@@ -1,4 +1,4 @@
-//! Session row model: turns raw tmux + git data into the 9-field row shape
+//! Session row model: turns raw tmux + git data into the 10-field row shape
 //! described in docs/parity.md.
 
 use std::collections::HashMap;
@@ -12,9 +12,11 @@ use std::time::{Duration, Instant};
 use crate::gitinfo::{self, MergeState};
 use crate::tmux::Tmux;
 
-/// One row of the session list. Field order mirrors the 9-field TSV from
-/// docs/parity.md; `name` doubles as both the machine key (field 1) and the
-/// display copy (field 4).
+/// One row of the session list. Field order mirrors the table columns; the
+/// `--plain` TSV in docs/parity.md uses the same order except `runner`,
+/// which is appended last (field 10) so positional consumers are unaffected.
+/// `name` doubles as both the machine key (field 1) and the display copy
+/// (field 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRow {
     pub name: String,
@@ -22,6 +24,7 @@ pub struct SessionRow {
     pub marker: char,
     pub display_name: String,
     pub attn: String,
+    pub runner: String,
     pub wt: String,
     pub project: String,
     pub branch: String,
@@ -35,6 +38,15 @@ pub fn attn_string(status: &str, server: &str) -> String {
         "-".to_string()
     } else {
         format!("{status}{server}")
+    }
+}
+
+/// Returns `@picker_runner` verbatim, or `-` if empty.
+pub fn runner_string(runner: &str) -> String {
+    if runner.is_empty() {
+        "-".to_string()
+    } else {
+        runner.to_string()
     }
 }
 
@@ -55,6 +67,7 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 '-'
             };
             let attn = attn_string(&s.picker_status, &s.picker_server);
+            let runner = runner_string(&s.picker_runner);
             let path = Path::new(&s.path);
             let wt = if gitinfo::is_worktree(path) {
                 "wt"
@@ -88,6 +101,7 @@ pub fn build_rows(tmux: &Tmux) -> Vec<SessionRow> {
                 marker,
                 display_name: s.name,
                 attn,
+                runner,
                 wt,
                 project,
                 branch,
@@ -366,5 +380,20 @@ mod tests {
         assert_eq!(results.get("proj1"), Some(&"proj1".to_string()));
         assert_eq!(results.get("proj2"), Some(&"proj2".to_string()));
         assert_eq!(results.get("proj3"), Some(&"proj3".to_string()));
+    }
+
+    #[test]
+    fn runner_placeholder_when_empty() {
+        assert_eq!(runner_string(""), "-");
+    }
+
+    #[test]
+    fn runner_passes_through_verbatim_claude() {
+        assert_eq!(runner_string("claude"), "claude");
+    }
+
+    #[test]
+    fn runner_passes_through_verbatim_token() {
+        assert_eq!(runner_string("my-agent"), "my-agent");
     }
 }
