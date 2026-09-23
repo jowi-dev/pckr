@@ -1144,6 +1144,10 @@ fn tiled_view_drill_in_and_switch() {
         },
     );
     assert!(
+        !text.contains("SESSION"),
+        "no session table header before drilling in:\n{text}"
+    );
+    assert!(
         text.contains("TILES — h/l:project | enter:open | t:flat | g:root | q/esc:quit"),
         "tiled help line must be rendered:\n{text}"
     );
@@ -1156,7 +1160,7 @@ fn tiled_view_drill_in_and_switch() {
     let text = wait_for(
         DEFAULT_TIMEOUT,
         || server.capture_pane("zz-pckr-host"),
-        |t| t.contains("SESSIONS —") && t.contains("sess-b1"),
+        |t| t.contains("SESSIONS —") && t.contains("sess-b1") && t.contains("tiles › proj-bbb"),
     );
     assert!(
         text.contains("SESSIONS — j/k:move | enter:switch | x:kill | h/esc:back | t:flat | q:quit")
@@ -1165,6 +1169,27 @@ fn tiled_view_drill_in_and_switch() {
     assert!(
         !text.contains("sess-a1"),
         "proj-bbb's drilled session list must not show proj-aaa's session:\n{text}"
+    );
+    assert!(
+        !text.contains("proj-aaa"),
+        "grid hidden while drilled, proj-aaa's tile must not be visible:\n{text}"
+    );
+
+    // Round trip: return to tiles and back to drilled view
+    server.send_key("zz-pckr-host", "Escape");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("TILES —") && t.contains("proj-aaa") && t.contains("proj-bbb"),
+    );
+
+    server.send_key("zz-pckr-host", "Enter");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("SESSIONS —") && t.contains("tiles › proj-bbb"),
     );
 
     // Switch to the selected session.
