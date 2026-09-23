@@ -54,7 +54,8 @@ Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `AGE`, `RUNNER`, `
 (`#` right-justified, rest left), two spaces between columns. Colors:
 `status` green when `merged` and no phase is set; `merged` with a phase
 set is uncolored; yellow when `unmerged`/`detached`; `branch` always dim;
-`age` red when strictly older than 15 minutes; nothing else colored.
+`age` red when strictly older than 15 minutes; `phase` red when `blocked`;
+nothing else colored.
 The TUI redraws every 5 seconds so ages stay current between keypresses.
 
 ### PR column (additive, GH-16)
@@ -196,7 +197,8 @@ guarantee in this document holds unchanged. The tiled view adds one optional
 global tmux option, `@picker_tile_cmd` (documented in the README), and no
 `tm` dependency; its kill path reuses the same classification and
 ConfirmKill flow described above. Tiles also roll up an active count from
-`@picker_phase` = `working` sessions per project.
+`@picker_phase` = `working` sessions per project, and mark projects with
+`@picker_phase` = `blocked` sessions with a `[N blocked]` count.
 
 ## Environment
 
