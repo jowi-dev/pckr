@@ -9,6 +9,7 @@ mod app;
 mod gitinfo;
 mod kill_safety;
 mod model;
+mod pr;
 mod render;
 mod tmux;
 mod ui;

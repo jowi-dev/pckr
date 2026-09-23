@@ -196,12 +196,13 @@ impl App {
         self.usage = usage;
     }
 
-    #[allow(dead_code)]
+    /// Returns the current transient status message, if any.
     pub fn status_message(&self) -> Option<&str> {
         self.status_message.as_deref()
     }
 
-    #[allow(dead_code)]
+    /// Sets a transient status message to be displayed on the prompt line;
+    /// it is automatically cleared by the next key press.
     pub fn set_status_message(&mut self, msg: String) {
         self.status_message = Some(msg);
     }
