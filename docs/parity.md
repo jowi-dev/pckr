@@ -11,7 +11,7 @@ devtools cutover PR deletes the script once every item here holds.
 `tmux display-popup -E`). Subcommands (all also used by tests):
 
 - `pckr list [--plain]` — print the session table. `--plain` prints the raw
-  10-field TSV; without it, print the padded, colored table (header first).
+  11-field TSV; without it, print the padded, colored table (header first).
 - `pckr branch-status <path>` — print `<branch> [merged|unmerged]`,
   `[detached]`, or nothing; always exit 0.
 - `pckr project-name <path>` — print parent-repo basename or `-`; exit 0.
@@ -27,9 +27,9 @@ by falling through to the interactive UI; do not reproduce that bug).
 
 ## Session list
 
-Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}'`.
+Source: `tmux list-sessions -F '#{session_name}|#{session_path}|#{@picker_status}|#{@picker_server}|#{@picker_runner}|#{@picker_phase}|#{@picker_pr}|#{@picker_last_active}'`.
 
-Row fields (the 10-field TSV output for `--plain`, one row per session):
+Row fields (the 11-field TSV output for `--plain`, one row per session):
 1. `name` — machine key, never displayed.
 2. `idx` — 1-based row number.
 3. `marker` — `*` if this is the current session (`display-message -p '#S'`), else `-`.
@@ -41,17 +41,21 @@ Row fields (the 10-field TSV output for `--plain`, one row per session):
 8. `branch` — from branch-status; `-` if none.
 9. `status` — `merged` / `unmerged` / `detached` / `-`.
 10. `runner` — `@picker_runner` value verbatim; `-` if empty (appended last so existing positional consumers are unaffected).
+11. `age` — formatted age in minutes since @picker_last_active (e.g. `3m`, `1h12m`),
+    or `-` when the option is unset or unparseable as a non-negative integer
+    (appended after `runner` for the same reason).
 
 The table (and the TUI) additionally shows a display-only PHASE column right
 after RUNNER: the `@picker_phase` value verbatim, `-` when empty. `--plain`
 omits it. This is a deliberate divergence from the bash picker (GH-11).
 
-Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `RUNNER`, `PHASE`, `WT`,
+Table rendering: header `#`, ` ` (marker), `SESSION`, `ATTN`, `AGE`, `RUNNER`, `PHASE`, `WT`,
 `PROJECT`, `BRANCH`, `STATUS`; columns padded to max plain-text width
 (`#` right-justified, rest left), two spaces between columns. Colors:
 `status` green when `merged` and no phase is set; `merged` with a phase
 set is uncolored; yellow when `unmerged`/`detached`; `branch` always dim;
-nothing else colored.
+`age` red when strictly older than 15 minutes; nothing else colored.
+The TUI redraws every 5 seconds so ages stay current between keypresses.
 
 ### PR column (additive, GH-16)
 
@@ -62,7 +66,7 @@ drilled session list) appends a trailing `PR` column after `STATUS`,
 rendering each value verbatim and uncolored; rows without a value get an
 empty cell. When no row has a value the column is omitted and output is
 identical to the parity table above. `@picker_pr` is not part of the
-10-field `--plain` TSV. pckr never parses the value.
+11-field `--plain` TSV. pckr never parses the value.
 
 ### Refresh hook (plugin trigger contract — NEW, replaces hardcoded phoenix call)
 
