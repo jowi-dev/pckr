@@ -95,7 +95,9 @@ external tool is involved; the tiled view works fully without `tm` on
 
 The layout is master-detail: the tile grid stays on top, and the selected
 tile's sessions are listed below once you drill in (`enter` or `j` from
-TILES focus). The filter (`i`, INSERT mode) applies to the flat view only.
+TILES focus). The selected tile is filled in reverse video while TILES
+focus is active, and keeps a dimmer dark-gray fill while focus is in its
+session list. The filter (`i`, INSERT mode) applies to the flat view only.
 
 ## Plugin contract
 
