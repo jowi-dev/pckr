@@ -156,6 +156,7 @@ fn event_loop(
                     app.arm_confirm_kill(name, classification.tier, classification.reason);
                 }
             }
+            Effect::OpenPr(_) => {}
             Effect::JumpRoot => {
                 actions::jump_root(tmux, None);
                 return Ok(None);
