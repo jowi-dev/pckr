@@ -6,7 +6,7 @@
 //! `Effect`, so it's unit-testable without a real tmux server or terminal.
 
 use crate::kill_safety::KillTier;
-use crate::model::{SessionRow, TileFields};
+use crate::model::{ProjectDisk, SessionRow, TileFields};
 
 /// Editing mode. Mirrors the two-mode contract from parity.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +57,12 @@ pub struct ProjectTile {
     /// `spend` field printed by `@picker_tile_cmd` for this project, or "-"
     /// when the option is unset or the field is missing.
     pub spend: String,
+    /// Number of git worktrees of the project (including ones with no
+    /// session); `None` when unknown.
+    pub worktrees: Option<usize>,
+    /// Cached disk usage across all worktrees; `None` before the first
+    /// measurement.
+    pub disk: Option<crate::disk::DiskUsage>,
 }
 
 /// Side effect requested by a key event. `None` means "handled internally,
@@ -91,6 +97,7 @@ pub struct App {
     tile_selected: usize,
     drill_selected: usize,
     tile_info: std::collections::HashMap<String, TileFields>,
+    disk_info: std::collections::HashMap<String, ProjectDisk>,
     /// Free-text usage string shown under the help line; see `model::read_usage`.
     usage: Option<String>,
     /// One-line transient message shown on the prompt line; cleared by the next key press.
@@ -149,6 +156,7 @@ impl App {
             tile_selected: 0,
             drill_selected: 0,
             tile_info: std::collections::HashMap::new(),
+            disk_info: std::collections::HashMap::new(),
             usage: None,
             status_message: None,
         }
@@ -223,6 +231,8 @@ impl App {
                     attn: String::new(),
                     ready: String::new(),
                     spend: String::new(),
+                    worktrees: None,
+                    disk: None,
                 });
                 tiles.len() - 1
             });
@@ -252,6 +262,9 @@ impl App {
             tile.spend = fields
                 .and_then(|f| f.spend.clone())
                 .unwrap_or_else(|| "-".to_string());
+            let disk = self.disk_info.get(&tile.project);
+            tile.worktrees = disk.and_then(|d| d.worktrees);
+            tile.disk = disk.and_then(|d| d.usage);
         }
         tiles
     }
@@ -310,6 +323,12 @@ impl App {
     /// `ready` and `spend`.
     pub fn set_tile_info(&mut self, info: std::collections::HashMap<String, TileFields>) {
         self.tile_info = info;
+    }
+
+    /// Sets the disk info (project -> worktree count and cached usage) used
+    /// to fill ProjectTile's `worktrees` and `disk`.
+    pub fn set_disk_info(&mut self, info: std::collections::HashMap<String, ProjectDisk>) {
+        self.disk_info = info;
     }
 
     fn clamp_selection(&mut self) {
@@ -1171,6 +1190,33 @@ mod tests {
         assert_eq!(tiles[1].project, "proj-b");
         assert_eq!(tiles[1].ready, "-");
         assert_eq!(tiles[1].spend, "-");
+    }
+
+    #[test]
+    fn set_disk_info_fills_tile_disk_fields() {
+        let mut app = App::new(vec![
+            row_with("a1", "proj-a", "merged", "-"),
+            row_with("b1", "proj-b", "merged", "-"),
+        ]);
+        let usage = crate::disk::DiskUsage {
+            kib: 1536,
+            measured_at: 100,
+        };
+        let mut info = std::collections::HashMap::new();
+        info.insert(
+            "proj-a".to_string(),
+            ProjectDisk {
+                worktrees: Some(3),
+                usage: Some(usage),
+            },
+        );
+        app.set_disk_info(info);
+
+        let tiles = app.tiles();
+        assert_eq!(tiles[0].worktrees, Some(3));
+        assert_eq!(tiles[0].disk, Some(usage));
+        assert_eq!(tiles[1].worktrees, None);
+        assert_eq!(tiles[1].disk, None);
     }
 
     // --- usage ---

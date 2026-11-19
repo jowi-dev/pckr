@@ -9,6 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::disk;
 use crate::gitinfo::{self, MergeState};
 use crate::tmux::Tmux;
 
@@ -342,6 +343,12 @@ pub fn build_tile_info(tmux: &Tmux) -> HashMap<String, TileFields> {
         return HashMap::new();
     };
 
+    run_tile_cmds(&cmd, &session_projects(tmux), TILE_CMD_TIMEOUT)
+}
+
+/// Distinct projects with a live session, as `(project name, main repo root)`
+/// in first-session order. Sessions outside a git repo are skipped.
+pub fn session_projects(tmux: &Tmux) -> Vec<(String, PathBuf)> {
     let mut projects: Vec<(String, PathBuf)> = Vec::new();
     for session in tmux.list_sessions() {
         let path = Path::new(&session.path);
@@ -354,8 +361,42 @@ pub fn build_tile_info(tmux: &Tmux) -> HashMap<String, TileFields> {
             projects.push((project, root));
         }
     }
+    projects
+}
 
-    run_tile_cmds(&cmd, &projects, TILE_CMD_TIMEOUT)
+/// Disk info for one project tile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectDisk {
+    /// Number of git worktrees of the project, including ones with no tmux
+    /// session; `None` when git could not list them.
+    pub worktrees: Option<usize>,
+    /// Cached disk measurement across all worktrees; `None` before the first
+    /// measurement finishes.
+    pub usage: Option<disk::DiskUsage>,
+}
+
+/// Builds per-project disk info for every project with a session.
+///
+/// Only cheap local git calls and a cache file read run here. The disk walk
+/// runs in a detached `pckr disk-scan` process (started when the cache is
+/// missing or stale), and its result shows on a later list build.
+pub fn build_disk_info(tmux: &Tmux, now: u64) -> HashMap<String, ProjectDisk> {
+    let mut info = HashMap::new();
+    for (project, root) in session_projects(tmux) {
+        let worktrees = match disk::worktree_paths(&root).len() {
+            0 => None,
+            n => Some(n),
+        };
+        let mut usage = None;
+        if let Some(common_dir) = disk::common_dir(&root) {
+            usage = disk::read_cache(&common_dir);
+            if disk::needs_scan(usage, now) {
+                disk::spawn_scan(&root, &common_dir);
+            }
+        }
+        info.insert(project, ProjectDisk { worktrees, usage });
+    }
+    info
 }
 
 /// Reads the global `@picker_usage` tmux option verbatim. Returns None if

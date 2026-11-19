@@ -7,11 +7,11 @@
 //! (`common_dir`, `worktree_paths`, `measure`, the cache read/write, and
 //! `scan`) shell out to git and du or touch the cache file.
 
-// Later slices wire these helpers into the tiled view.
-#![allow(dead_code)]
-
+use std::fs::OpenOptions;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime};
 
 use crate::gitinfo::run_git_ok;
 
@@ -19,6 +19,11 @@ use crate::gitinfo::run_git_ok;
 pub const CACHE_FILE: &str = "pckr-disk-usage";
 /// Lock file name inside the git common dir, held while a scan runs.
 pub const LOCK_FILE: &str = "pckr-disk-usage.lock";
+
+/// A lock file older than this is treated as left behind by a crashed scan.
+pub const LOCK_STALE_AFTER: Duration = Duration::from_secs(3600);
+/// Age in seconds at which a cached measurement is refreshed.
+pub const RESCAN_AFTER: u64 = 600;
 
 /// A cached disk measurement for one project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +184,75 @@ pub fn scan(path: &Path) -> Option<DiskUsage> {
     usage
 }
 
+/// True when there is no cached measurement or it is at least `RESCAN_AFTER`
+/// seconds old.
+pub fn needs_scan(usage: Option<DiskUsage>, now: u64) -> bool {
+    match usage {
+        None => true,
+        Some(u) => now.saturating_sub(u.measured_at) >= RESCAN_AFTER,
+    }
+}
+
+/// Takes the scan lock in `common_dir`; false when another scan holds it. A
+/// lock older than `LOCK_STALE_AFTER` is removed and taken over once.
+fn acquire_lock(common_dir: &Path) -> bool {
+    let lock = common_dir.join(LOCK_FILE);
+    let create = || {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+            .is_ok()
+    };
+    if create() {
+        return true;
+    }
+    let stale = std::fs::metadata(&lock)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| SystemTime::now().duration_since(t).ok())
+        .is_some_and(|age| age > LOCK_STALE_AFTER);
+    if !stale {
+        return false;
+    }
+    let _ = std::fs::remove_file(&lock);
+    create()
+}
+
+/// Starts a detached `pckr disk-scan <root>` unless one is already running
+/// (lock file in `common_dir`). Returns immediately; never waits on the scan.
+pub fn spawn_scan(root: &Path, common_dir: &Path) {
+    if !acquire_lock(common_dir) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        let _ = std::fs::remove_file(common_dir.join(LOCK_FILE));
+        return;
+    };
+    // A new process group keeps the scan out of the popup's foreground group,
+    // so it survives the popup closing (the tty hangup signal targets that
+    // group).
+    let child = Command::new(exe)
+        .arg("disk-scan")
+        .arg(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn();
+    match child {
+        Ok(mut child) => {
+            // Reap the child if pckr is still running when it finishes.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(common_dir.join(LOCK_FILE));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +273,22 @@ worktree /repo.git\nbare\n";
                 PathBuf::from("/repo.git"),
             ]
         );
+    }
+
+    #[test]
+    fn needs_scan_cases() {
+        let at = |measured_at| {
+            Some(DiskUsage {
+                kib: 1,
+                measured_at,
+            })
+        };
+        assert!(needs_scan(None, 1000));
+        assert!(!needs_scan(at(1000 - (RESCAN_AFTER - 1)), 1000));
+        assert!(needs_scan(at(1000 - RESCAN_AFTER), 1000));
+        assert!(needs_scan(at(0), 1_000_000));
+        // Clock skew (measured in the future) is not stale.
+        assert!(!needs_scan(at(2000), 1000));
     }
 
     #[test]

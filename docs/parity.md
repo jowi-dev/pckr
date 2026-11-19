@@ -215,7 +215,9 @@ global tmux option, `@picker_tile_cmd` (documented in the README), and no
 `tm` dependency; its kill path reuses the same classification and
 ConfirmKill flow described above. Tiles also roll up an active count from
 `@picker_phase` = `working` sessions per project, and mark projects with
-`@picker_phase` = `blocked` sessions with a `[N blocked]` count.
+`@picker_phase` = `blocked` sessions with a `[N blocked]` count. Tiles also
+show the project's worktree count and cached disk size, filled by the
+background `pckr disk-scan` (documented in the README).
 
 ## Environment
 

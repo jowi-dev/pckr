@@ -20,6 +20,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::actions;
 use crate::app::{App, Effect, Key, Mode, View};
+use crate::disk;
 use crate::kill_safety::{self, KillTier};
 use crate::model;
 use crate::pr;
@@ -37,10 +38,10 @@ const CONFIRM_HELP: &str = "y=kill  any other key=cancel";
 const AGE_REDRAW_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Minimum tile card dimensions: width in columns, height in lines
-/// (2 border + 4 content lines: title, counts, ready, spend — the floor that
-/// keeps each line legible).
+/// (2 border + 5 content lines: title, counts, ready, spend, disk — the floor
+/// that keeps each line legible).
 const MIN_TILE_WIDTH: u16 = 34;
-const MIN_TILE_HEIGHT: u16 = 6;
+const MIN_TILE_HEIGHT: u16 = 7;
 
 /// Restores the terminal to its pre-TUI state (raw mode off, alternate
 /// screen left). Best-effort: called on every exit path, including from the
@@ -75,12 +76,15 @@ fn key_from_event(code: KeyCode) -> Option<Key> {
     }
 }
 
-/// One list build: refresh hook, rows, tile info, and usage, in that order so
-/// the hook can update `@picker_tile_cmd` inputs and `@picker_usage`.
+/// One list build: refresh hook, rows, tile info, disk info, and usage, in
+/// that order so the hook can update `@picker_tile_cmd` inputs and
+/// `@picker_usage`. Disk info only reads the cache; stale caches start a
+/// background scan and never block here.
 fn reload(app: &mut App, tmux: &Tmux) {
     model::run_refresh_hook(tmux);
     app.set_rows(model::build_rows(tmux));
     app.set_tile_info(model::build_tile_info(tmux));
+    app.set_disk_info(model::build_disk_info(tmux, model::now_epoch()));
     app.set_usage(model::read_usage(tmux));
 }
 
@@ -92,6 +96,7 @@ pub fn run(tmux: &Tmux) -> io::Result<()> {
     let rows = model::build_rows(tmux);
     let mut app = App::new(rows);
     app.set_tile_info(model::build_tile_info(tmux));
+    app.set_disk_info(model::build_disk_info(tmux, model::now_epoch()));
     app.set_usage(model::read_usage(tmux));
 
     install_panic_hook();
@@ -358,7 +363,14 @@ fn draw_tiled(frame: &mut Frame, area: Rect, app: &App, now: u64) {
                 selected_row,
                 visible_rows as u16,
             ) as usize;
-            draw_tile_grid(frame, area, app, &tiles, cols, row_offset, visible_rows);
+            draw_tile_grid(
+                frame,
+                area,
+                app,
+                &tiles,
+                (cols, row_offset, visible_rows),
+                now,
+            );
         }
         View::Drilled => {
             let chunks = Layout::default()
@@ -388,9 +400,8 @@ fn draw_tile_grid(
     area: Rect,
     app: &App,
     tiles: &[crate::app::ProjectTile],
-    cols: usize,
-    row_offset: usize,
-    visible_rows: usize,
+    (cols, row_offset, visible_rows): (usize, usize, usize),
+    now: u64,
 ) {
     let card_width = area.width / cols as u16;
     let card_height = area.height / visible_rows as u16;
@@ -421,7 +432,7 @@ fn draw_tile_grid(
                 width: actual_width,
                 height: actual_height,
             };
-            draw_tile_card(frame, card_area, app, tile, tile_idx);
+            draw_tile_card(frame, card_area, app, tile, tile_idx, now);
         }
     }
 }
@@ -443,6 +454,7 @@ fn draw_tile_card(
     app: &App,
     tile: &crate::app::ProjectTile,
     tile_idx: usize,
+    now: u64,
 ) {
     let selected = tile_idx == app.tile_selected();
     let card_style = tile_card_style(selected);
@@ -464,10 +476,17 @@ fn draw_tile_card(
     ));
     let ready_line = Line::from(format!("{} ready", tile.ready));
     let spend_line = Line::from(format!("{} spend", tile.spend));
+    let disk_line = Line::from(disk::disk_line(tile.worktrees, tile.disk, now));
 
     let block = Block::default().borders(Borders::ALL).style(card_style);
-    let paragraph =
-        Paragraph::new(vec![title_line, rollup_line, ready_line, spend_line]).block(block);
+    let paragraph = Paragraph::new(vec![
+        title_line,
+        rollup_line,
+        ready_line,
+        spend_line,
+        disk_line,
+    ])
+    .block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -979,7 +998,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         assert_eq!(tile_grid_dims(2, area), (2, 1));
         assert_eq!(tile_grid_dims(5, area), (2, 3));
-        assert_eq!(tile_grid_dims(12, area), (2, 4));
+        assert_eq!(tile_grid_dims(12, area), (2, 3));
         assert_eq!(tile_grid_dims(1, area), (1, 1));
         assert_eq!(tile_grid_dims(0, area), (1, 0));
     }
@@ -1155,6 +1174,47 @@ mod tests {
         assert!(
             text.contains("- spend"),
             "projy tile should show '- spend':\n{text}"
+        );
+    }
+
+    #[test]
+    fn tile_renders_worktree_count_and_disk_size_with_age() {
+        let mut app = App::new(vec![row_with(1, "a1", "projx", "-", "-")]);
+        let mut info = std::collections::HashMap::new();
+        info.insert(
+            "projx".to_string(),
+            crate::model::ProjectDisk {
+                worktrees: Some(3),
+                usage: Some(crate::disk::DiskUsage {
+                    kib: 1536,
+                    measured_at: 1000,
+                }),
+            },
+        );
+        app.set_disk_info(info);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_at(f, &app, 1240)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("3 wt  ~1.5M disk 4m ago"),
+            "tile should show disk line:\n{text}"
+        );
+    }
+
+    #[test]
+    fn tile_without_disk_info_renders_placeholders() {
+        let app = App::new(vec![row_with(1, "a1", "projx", "-", "-")]);
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_at(f, &app, 1240)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("- wt  - disk"),
+            "tile should show placeholders:\n{text}"
         );
     }
 
