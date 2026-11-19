@@ -29,7 +29,7 @@ fn run_git(path: &Path, args: &[&str]) -> Option<Output> {
 }
 
 /// Runs a git command and returns trimmed stdout, only on success.
-fn run_git_ok(path: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn run_git_ok(path: &Path, args: &[&str]) -> Option<String> {
     let output = run_git(path, args)?;
     if !output.status.success() {
         return None;

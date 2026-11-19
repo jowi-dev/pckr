@@ -103,8 +103,18 @@ unavailable) and a spend figure (`<value> spend`, or `- spend` if unset or
 unavailable). pckr itself never calls `tm`; the tiled view works fully
 without `tm` on `PATH`.
 
+A fifth line shows the project's disk footprint, for example
+`3 wt  ~1.5M disk 4m ago`: the worktree count from `git worktree list`
+(including worktrees that have no tmux session), then the approximate total
+size of all of them, prefixed `~` because `du` counts APFS clones at full
+size, with the age of the measurement. It reads `-` in place of the size
+until the first measurement finishes. A background `pckr disk-scan` process
+does the measuring and caches the result as `pckr-disk-usage` in the
+project's git common dir; the cache is rescanned when it is older than 10
+minutes. Opening or refreshing the picker never waits on a disk walk.
+
 The tile grid stretches to fill the entire popup, with the column count
-determined by popup width and a floor of about 28 columns by 4 lines per
+determined by popup width and a floor of 34 columns by 7 lines per
 tile so project titles, session counts, and flags stay legible. When tiles
 exceed the available height, the grid scrolls by complete rows. Drilling
 in (`enter` or `j` from TILES focus) hides the grid and replaces it with the
@@ -245,6 +255,8 @@ prompt line until the next key press. The picker stays open in all cases.
 - `pckr` — launch the interactive TUI.
 - `pckr list [--plain]` — print the session table (`--plain` for raw TSV).
 - `pckr branch-status <path>` — print `<branch> [merged|unmerged]` or `[detached]`.
+- `pckr disk-scan <path>` — internal: measure all worktrees of the project and
+  cache the total in its git common dir (spawned in the background).
 - `pckr project-name <path>` — print the parent repo's basename, or `-`.
 - `pckr kill <session>` — kill a session and clean up its worktree, if any.
   Cleanup is skipped (the directory is left in place) if the worktree has

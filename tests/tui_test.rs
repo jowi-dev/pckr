@@ -1909,3 +1909,94 @@ fn jump_root_and_root_session_cli_resolve_across_sessions() {
         "root-repo"
     );
 }
+
+/// A git repo `proj-disk` (one commit) with one linked worktree created
+/// outside the main checkout, plus a tmux session rooted in the main
+/// checkout. Returns the server and the main checkout path.
+fn disk_fixture(label: &str) -> (TestServer, PathBuf) {
+    let server = TestServer::new(label);
+    let base = fresh_dir(&format!("{label}-repos"));
+    let main = base.join("proj-disk");
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("f.txt"), "a\n").unwrap();
+    git(&main, &["add", "f.txt"]);
+    git_commit(&main, "initial");
+    let linked = fresh_dir(&format!("{label}-linked")).join("feat");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat",
+            linked.to_str().unwrap(),
+        ],
+    );
+    server.new_session("sess-disk", &main, &["sh"]);
+    (server, main)
+}
+
+fn launch_pckr_host(server: &TestServer, label: &str) {
+    let argv = pckr_argv(&server.socket);
+    let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    server.new_session(
+        "zz-pckr-host",
+        &fresh_dir(&format!("{label}-host")),
+        &argv_ref,
+    );
+}
+
+#[test]
+fn tiles_show_worktree_count_and_cached_disk_size() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, main) = disk_fixture("disk-cached");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // Fresh cache: no scan is spawned, so the value stays 1.5M.
+    std::fs::write(main.join(".git/pckr-disk-usage"), format!("{now} 1536\n")).unwrap();
+    launch_pckr_host(&server, "disk-cached");
+
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("TILES —") && t.contains("2 wt  ~1.5M disk"),
+    );
+}
+
+#[test]
+fn tiles_spawn_background_scan_when_cache_missing() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, main) = disk_fixture("disk-scan");
+    let cache = main.join(".git/pckr-disk-usage");
+    let lock = main.join(".git/pckr-disk-usage.lock");
+    assert!(!cache.exists());
+    launch_pckr_host(&server, "disk-scan");
+
+    // First render never waits on the scan.
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || server.capture_pane("zz-pckr-host"),
+        |t| t.contains("TILES —") && t.contains("2 wt  - disk"),
+    );
+
+    let contents = wait_for(
+        DEFAULT_TIMEOUT,
+        || std::fs::read_to_string(&cache).unwrap_or_default(),
+        |c| !c.trim().is_empty(),
+    );
+    let fields: Vec<&str> = contents.split_whitespace().collect();
+    assert_eq!(fields.len(), 2, "cache must be two integers: {contents:?}");
+    for f in &fields {
+        f.parse::<u64>()
+            .unwrap_or_else(|_| panic!("non-integer cache field {f:?} in {contents:?}"));
+    }
+    wait_for(
+        DEFAULT_TIMEOUT,
+        || lock.exists().to_string(),
+        |s| s == "false",
+    );
+}
