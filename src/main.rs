@@ -6,6 +6,7 @@
 
 mod actions;
 mod app;
+mod disk;
 mod gitinfo;
 mod kill_safety;
 mod model;
