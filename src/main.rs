@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use tmux::Tmux;
 
 fn usage() -> &'static str {
-    "usage: pckr <list [--plain] | branch-status <path> | project-name <path> | kill <session> | root-session [<session>] | jump-root [<session>]>"
+    "usage: pckr <list [--plain] | branch-status <path> | project-name <path> | disk-scan <path> | kill <session> | root-session [<session>] | jump-root [<session>]>"
 }
 
 fn main() -> ExitCode {
@@ -44,6 +44,7 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "list" => cmd_list(&tmux, &args[1..]),
         "branch-status" => cmd_branch_status(&args[1..]),
+        "disk-scan" => cmd_disk_scan(&args[1..]),
         "project-name" => cmd_project_name(&args[1..]),
         "kill" => cmd_kill(&tmux, &args[1..]),
         "root-session" => cmd_root_session(&tmux, &args[1..]),
@@ -83,6 +84,18 @@ fn cmd_branch_status(args: &[String]) -> ExitCode {
             gitinfo::MergeState::Unmerged => println!("{} [unmerged]", bs.branch),
         }
     }
+    ExitCode::from(0)
+}
+
+fn cmd_disk_scan(args: &[String]) -> ExitCode {
+    let path = match args.first() {
+        Some(p) => p,
+        None => {
+            eprintln!("usage: pckr disk-scan <path>");
+            return ExitCode::from(2);
+        }
+    };
+    disk::scan(Path::new(path));
     ExitCode::from(0)
 }
 

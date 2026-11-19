@@ -3,12 +3,22 @@
 //! pckr shows per-project disk usage across all git worktrees in the tiled
 //! view. Sizes are measured in the background by `du` and cached in a file
 //! inside the project's git common dir, so a list build never waits on a disk
-//! walk. Everything here is pure: parsing, formatting, and no I/O.
+//! walk. Most helpers are pure (parsing, formatting); the I/O helpers
+//! (`common_dir`, `worktree_paths`, `measure`, the cache read/write, and
+//! `scan`) shell out to git and du or touch the cache file.
 
 // Later slices wire these helpers into the tiled view.
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use crate::gitinfo::run_git_ok;
+
+/// Cache file name inside the git common dir.
+pub const CACHE_FILE: &str = "pckr-disk-usage";
+/// Lock file name inside the git common dir, held while a scan runs.
+pub const LOCK_FILE: &str = "pckr-disk-usage.lock";
 
 /// A cached disk measurement for one project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +110,73 @@ pub fn disk_line(worktrees: Option<usize>, usage: Option<DiskUsage>, now: u64) -
         None => "- disk".to_string(),
     };
     format!("{wt}  {size}")
+}
+
+/// Absolute git common dir of the project containing `path`; `None` when
+/// `path` is not in a git repo.
+pub fn common_dir(path: &Path) -> Option<PathBuf> {
+    let out = run_git_ok(
+        path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    (!out.is_empty()).then(|| PathBuf::from(out))
+}
+
+/// Every worktree path of the project containing `path`; empty on failure.
+pub fn worktree_paths(path: &Path) -> Vec<PathBuf> {
+    run_git_ok(path, &["worktree", "list", "--porcelain"])
+        .map(|s| parse_worktree_list(&s))
+        .unwrap_or_default()
+}
+
+/// Total KiB of the existing `paths`, from a single `du -sk`. Missing paths
+/// are skipped; `None` if none exist or the output does not parse. A non-zero
+/// du exit is tolerated (unreadable files are normal) when stdout parses.
+pub fn measure(paths: &[PathBuf]) -> Option<u64> {
+    let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
+    if existing.is_empty() {
+        return None;
+    }
+    let out = Command::new("du")
+        .arg("-sk")
+        .args(existing)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    parse_du_total(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Reads the cached measurement from `<common_dir>/CACHE_FILE`.
+pub fn read_cache(common_dir: &Path) -> Option<DiskUsage> {
+    parse_cache(&std::fs::read_to_string(common_dir.join(CACHE_FILE)).ok()?)
+}
+
+/// Atomically writes the cache (temp file, then rename over `CACHE_FILE`).
+pub fn write_cache(common_dir: &Path, u: &DiskUsage) -> std::io::Result<()> {
+    let tmp = common_dir.join(format!("{CACHE_FILE}.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, format_cache(u))?;
+    std::fs::rename(&tmp, common_dir.join(CACHE_FILE)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// Measures every worktree of the project containing `path`, writes the
+/// cache stamped with the time the measurement finished, and removes the lock file (best effort,
+/// on every path once the common dir is known). Returns the usage.
+///
+/// This walks the disk and can take minutes on large projects, so it is meant
+/// to run in a detached background process, never on a list build.
+pub fn scan(path: &Path) -> Option<DiskUsage> {
+    let dir = common_dir(path)?;
+    let usage = measure(&worktree_paths(path)).map(|kib| DiskUsage {
+        kib,
+        measured_at: crate::model::now_epoch(),
+    });
+    if let Some(u) = &usage {
+        let _ = write_cache(&dir, u);
+    }
+    let _ = std::fs::remove_file(dir.join(LOCK_FILE));
+    usage
 }
 
 #[cfg(test)]

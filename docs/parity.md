@@ -14,6 +14,11 @@ devtools cutover PR deletes the script once every item here holds.
   11-field TSV; without it, print the padded, colored table (header first).
 - `pckr branch-status <path>` — print `<branch> [merged|unmerged]`,
   `[detached]`, or nothing; always exit 0.
+- `pckr disk-scan <path>` — measure every worktree of the project containing
+  `<path>` (from `git worktree list`) with one `du -sk`, write `<epoch> <kib>`
+  to `pckr-disk-usage` in the git common dir, remove `pckr-disk-usage.lock`;
+  always exits 0. Internal: spawned in the background by the tiled view.
+  Additive, no bash-picker equivalent.
 - `pckr project-name <path>` — print parent-repo basename or `-`; exit 0.
 - `pckr kill <session>` — kill session + worktree cleanup (below); exit 0.
 - `pckr root-session [<session>]` — print the root session name for a

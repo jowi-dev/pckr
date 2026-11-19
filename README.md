@@ -245,6 +245,8 @@ prompt line until the next key press. The picker stays open in all cases.
 - `pckr` — launch the interactive TUI.
 - `pckr list [--plain]` — print the session table (`--plain` for raw TSV).
 - `pckr branch-status <path>` — print `<branch> [merged|unmerged]` or `[detached]`.
+- `pckr disk-scan <path>` — internal: measure all worktrees of the project and
+  cache the total in its git common dir (spawned in the background).
 - `pckr project-name <path>` — print the parent repo's basename, or `-`.
 - `pckr kill <session>` — kill a session and clean up its worktree, if any.
   Cleanup is skipped (the directory is left in place) if the worktree has
